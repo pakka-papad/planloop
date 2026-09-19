@@ -1,4 +1,12 @@
-import type { ActionPlan, PlanStep, PlanVersion } from "../domain/action-plan"
+import * as v from "valibot"
+
+import type {
+  ActionPlan,
+  ActionPlanSummary,
+  PlanStep,
+  PlanVersion,
+} from "../domain/action-plan"
+import { UtcTimestampSchema, UuidSchema, type Uuid } from "../domain/scalars"
 
 export interface ActionPlanRow {
   id: string
@@ -24,9 +32,69 @@ export interface ActionPlanStepRow {
   description: string
 }
 
+interface ActionPlanSummaryRow {
+  plan_id: string
+  created_at: string
+  created_by: string | null
+  version_id: string
+  version: number
+  name: string
+  use_when: string
+  approved_at: string
+}
+
+export async function findActionPlans(
+  database: D1Database,
+  limit: number,
+  cursor: { readonly createdAt: string; readonly id: string } | null,
+): Promise<readonly ActionPlanSummary[]> {
+  const cursorClause =
+    cursor === null ? "" : "AND (p.created_at < ? OR (p.created_at = ? AND p.id < ?))"
+  const statement = database.prepare(
+    `SELECT
+       p.id AS plan_id,
+       p.created_at,
+       p.created_by,
+       v.id AS version_id,
+       v.version,
+       v.name,
+       v.use_when,
+       v.approved_at
+     FROM action_plans p
+     JOIN action_plan_versions v ON v.id = (
+       SELECT latest.id
+       FROM action_plan_versions latest
+       WHERE latest.plan_id = p.id
+       ORDER BY latest.version DESC
+       LIMIT 1
+     )
+     WHERE 1 = 1 ${cursorClause}
+     ORDER BY p.created_at DESC, p.id DESC
+     LIMIT ?`,
+  )
+  const bound =
+    cursor === null
+      ? statement.bind(limit)
+      : statement.bind(cursor.createdAt, cursor.createdAt, cursor.id, limit)
+  const { results } = await bound.all<ActionPlanSummaryRow>()
+
+  return results.map((row) => ({
+    id: v.parse(UuidSchema, row.plan_id),
+    createdAt: v.parse(UtcTimestampSchema, row.created_at),
+    createdBy: row.created_by,
+    currentVersion: {
+      id: v.parse(UuidSchema, row.version_id),
+      version: row.version,
+      name: row.name,
+      useWhen: row.use_when,
+      approvedAt: v.parse(UtcTimestampSchema, row.approved_at),
+    },
+  }))
+}
+
 export async function findActionPlanById(
   database: D1Database,
-  planId: string,
+  planId: Uuid,
 ): Promise<ActionPlan | null> {
   const plan = await database
     .prepare("SELECT id, created_at, created_by FROM action_plans WHERE id = ?")
@@ -65,7 +133,7 @@ export async function findActionPlanById(
 
 export function toPlanStep(row: ActionPlanStepRow): PlanStep {
   return {
-    id: row.id,
+    id: v.parse(UuidSchema, row.id),
     position: row.position,
     title: row.title,
     description: row.description,
@@ -77,21 +145,21 @@ export function toPlanVersion(
   steps: readonly ActionPlanStepRow[],
 ): PlanVersion {
   return {
-    id: row.id,
-    planId: row.plan_id,
+    id: v.parse(UuidSchema, row.id),
+    planId: v.parse(UuidSchema, row.plan_id),
     version: row.version,
     name: row.name,
     useWhen: row.use_when,
     steps: [...steps].sort((left, right) => left.position - right.position).map(toPlanStep),
-    approvedAt: row.approved_at,
+    approvedAt: v.parse(UtcTimestampSchema, row.approved_at),
     approvedBy: row.approved_by,
   }
 }
 
 export function toActionPlan(row: ActionPlanRow, currentVersion: PlanVersion): ActionPlan {
   return {
-    id: row.id,
-    createdAt: row.created_at,
+    id: v.parse(UuidSchema, row.id),
+    createdAt: v.parse(UtcTimestampSchema, row.created_at),
     createdBy: row.created_by,
     currentVersion,
   }

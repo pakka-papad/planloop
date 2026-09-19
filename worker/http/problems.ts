@@ -4,6 +4,13 @@ export interface ProblemDetails {
   readonly status: number
   readonly detail: string
   readonly code: string
+  readonly errors?: readonly FieldError[]
+}
+
+export interface FieldError {
+  readonly field: string
+  readonly code: string
+  readonly message: string
 }
 
 export function problem(details: ProblemDetails): Response {
@@ -30,5 +37,16 @@ export function internalError(): Response {
     status: 500,
     detail: "An unexpected error occurred.",
     code: "internal_error",
+  })
+}
+
+export function validationProblem(errors: readonly FieldError[]): Response {
+  return problem({
+    type: "urn:planloop:problem:validation-error",
+    title: "Request validation failed",
+    status: 422,
+    detail: "The request contains invalid fields.",
+    code: "validation_error",
+    errors,
   })
 }

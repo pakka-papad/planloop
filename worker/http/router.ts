@@ -1,4 +1,4 @@
-import { handleGetActionPlan } from "./action-plans"
+import { handleGetActionPlan, handleListActionPlans } from "./action-plans"
 import { handleHealth } from "./health"
 import { notFound } from "./problems"
 
@@ -19,6 +19,11 @@ const routes: readonly Route[] = [
     method: "GET",
     pattern: new URLPattern({ pathname: "/api/health" }),
     handle: (_request, env) => handleHealth(env),
+  },
+  {
+    method: "GET",
+    pattern: new URLPattern({ pathname: "/api/v1/action-plans" }),
+    handle: (request, env) => handleListActionPlans(request, env.DB),
   },
   {
     method: "GET",

@@ -31,8 +31,8 @@ A plan version contains:
 
 | Field | Type | Constraints |
 | --- | --- | --- |
-| `id` | UUIDv7 | Identifies this exact immutable version. |
-| `plan_id` | UUIDv7 | Stable across every version of the plan. |
+| `id` | UUIDv4 | Identifies this exact immutable version. |
+| `plan_id` | UUIDv4 | Stable across every version of the plan. |
 | `version` | integer | Starts at 1 and increases by exactly 1. |
 | `name` | string | 1–120 characters. |
 | `use_when` | string | 1–1000 characters. |
@@ -44,7 +44,7 @@ Each plan step contains:
 
 | Field | Type | Constraints |
 | --- | --- | --- |
-| `id` | UUIDv7 | Server-generated and immutable after approval. |
+| `id` | UUIDv4 | Server-generated and immutable after approval. |
 | `position` | integer | Starts at 1; unique and contiguous within the version. |
 | `title` | string | 1–200 characters. |
 | `description` | string | 1–2000 characters. |
@@ -53,7 +53,7 @@ An action plan contains:
 
 | Field | Type | Constraints |
 | --- | --- | --- |
-| `id` | UUIDv7 | Stable plan identity. |
+| `id` | UUIDv4 | Stable plan identity. |
 | `created_at` | timestamp | Set by the server when the plan is created. |
 | `created_by` | string or null | Server-owned actor ID. |
 | `current_version` | plan version | Complete current approved version, including ordered steps. |
@@ -120,8 +120,8 @@ The server considers only current approved plan versions. It returns at most `li
 {
   "suggestions": [
     {
-      "plan_id": "0199aa00-1111-7000-8000-000000000011",
-      "plan_version_id": "0199aa00-1111-7000-8000-000000000010",
+      "plan_id": "0199aa00-1111-4000-8000-000000000011",
+      "plan_version_id": "0199aa00-1111-4000-8000-000000000010",
       "version": 1,
       "name": "Elevated authentication errors",
       "use_when": "Use when authentication errors rise across one or more services.",
@@ -146,7 +146,7 @@ The engineer starts an incident using the exact plan version they selected.
 {
   "title": "Authentication errors across checkout",
   "symptoms": "Authentication errors are rising across checkout and account services.",
-  "plan_version_id": "0199aa00-1111-7000-8000-000000000010"
+  "plan_version_id": "0199aa00-1111-4000-8000-000000000010"
 }
 ```
 
@@ -154,7 +154,7 @@ Constraints:
 
 - `title`: required, 1–200 characters.
 - `symptoms`: required, 1–4000 characters.
-- `plan_version_id`: required UUIDv7 and must be a current approved version.
+- `plan_version_id`: required UUIDv4 and must be a current approved version.
 - A version superseded between suggestion and incident creation returns `409` with code `plan_version_superseded` and the current version ID.
 
 The server pins the supplied version permanently and creates an open incident with `review_proposal_id: null`. It does not run plan suggestion again.
@@ -165,13 +165,13 @@ An incident contains:
 
 | Field | Type | Constraints |
 | --- | --- | --- |
-| `id` | UUIDv7 | Server-generated. |
+| `id` | UUIDv4 | Server-generated. |
 | `title` | string | 1–200 characters. |
 | `symptoms` | string | 1–4000 characters; retained after trimming. |
 | `status` | enum | `open` or `closed`; reopening is not supported. |
 | `pinned_plan_version` | plan version | Complete immutable version selected at creation. |
 | `action_records` | array | Ordered by `recorded_at`, then `id`, ascending. |
-| `review_proposal_id` | UUIDv7 or null | Proposal targeted by this incident's closure; remains `null` when the plan was followed as written. |
+| `review_proposal_id` | UUIDv4 or null | Proposal targeted by this incident's closure; remains `null` when the plan was followed as written. |
 | `created_at` | timestamp | Set by the server when the incident is created. |
 | `created_by` | string or null | Server-owned actor ID. |
 | `closed_at` | timestamp or null | Set by the server when the incident is closed; otherwise `null`. |
@@ -195,10 +195,10 @@ An action record contains:
 
 | Field | Type | Constraints |
 | --- | --- | --- |
-| `id` | UUIDv7 | Server-generated. |
-| `incident_id` | UUIDv7 | Owning incident. |
+| `id` | UUIDv4 | Server-generated. |
+| `incident_id` | UUIDv4 | Owning incident. |
 | `type` | enum | `step_completed`, `step_skipped`, `step_modified`, or `additional_action`. |
-| `plan_step_id` | UUIDv7 or null | Required for step records and must belong to the pinned version; prohibited for `additional_action`. |
+| `plan_step_id` | UUIDv4 or null | Required for step records and must belong to the pinned version; prohibited for `additional_action`. |
 | `details` | string or null | Original human description of what happened; maximum 2000 characters. |
 | `reason` | string or null | Human explanation of why the plan was not followed; maximum 1000 characters. |
 | `recorded_at` | timestamp | Set by the server. |
@@ -218,7 +218,7 @@ Request rules:
 ```json
 {
   "type": "step_modified",
-  "plan_step_id": "0199aa00-1111-7000-8000-000000000001",
+  "plan_step_id": "0199aa00-1111-4000-8000-000000000001",
   "details": "Drained primary traffic before canary validation.",
   "reason": "The error rate was increasing too quickly to wait."
 }
@@ -242,11 +242,11 @@ If the Workflow cannot start, the request returns `503`, but the committed closu
 
 ```json
 {
-  "incident_id": "0199aa00-1111-7000-8000-000000000020",
+  "incident_id": "0199aa00-1111-4000-8000-000000000020",
   "status": "closed",
   "closed_at": "2026-09-19T08:45:00.000Z",
   "closed_by": null,
-  "review_proposal_id": "0199aa00-1111-7000-8000-000000000040"
+  "review_proposal_id": "0199aa00-1111-4000-8000-000000000040"
 }
 ```
 
@@ -280,8 +280,8 @@ A review proposal contains:
 
 | Field | Type | Constraints |
 | --- | --- | --- |
-| `id` | UUIDv7 | Server-generated. |
-| `plan_id` | UUIDv7 | Plan to update. |
+| `id` | UUIDv4 | Server-generated. |
+| `plan_id` | UUIDv4 | Plan to update. |
 | `source_plan_version` | plan version | Complete approved version the draft proposes replacing; immutable. |
 | `contributing_incidents` | incident summary array | Every closed incident referencing this proposal. Each summary contains `id`, `title`, `symptoms`, complete `pinned_plan_version`, and `closed_at`. |
 | `evidence` | action record array | Distinct union of the records cited by the proposal's changes. |
@@ -331,7 +331,7 @@ The Workflow reloads every closed incident referencing the proposal. If the Work
     "use_when": "Use when authentication errors rise across one or more services.",
     "steps": [
       {
-        "source_step_id": "0199aa00-1111-7000-8000-000000000001",
+        "source_step_id": "0199aa00-1111-4000-8000-000000000001",
         "title": "Assess impact",
         "description": "Confirm scope, affected services, and customer impact."
       },
@@ -348,7 +348,7 @@ The Workflow reloads every closed incident referencing the proposal. If the Work
       "proposed_step_position": 2,
       "rationale": "Mitigation began before propagation was confirmed.",
       "action_record_ids": [
-        "0199aa00-1111-7000-8000-000000000030"
+        "0199aa00-1111-4000-8000-000000000030"
       ]
     }
   ]
@@ -359,8 +359,8 @@ Draft constraints:
 
 - `summary`: 1–2000 characters.
 - Proposed plan fields use the plan-version limits and contain 1–50 steps in final order.
-- In a proposed step, `source_step_id` is a UUIDv7 from the source plan version, or `null` for a new step.
-- In a change, `source_step_id` is a UUIDv7 identifying the affected step in the source plan version.
+- In a proposed step, `source_step_id` is a UUIDv4 from the source plan version, or `null` for a new step.
+- In a change, `source_step_id` is a UUIDv4 identifying the affected step in the source plan version.
 - `proposed_step_position` is a 1-based integer within the proposed steps.
 - `fields` is a non-empty array of unique field names and lists exactly the fields modified by that change.
 - A source step appears at most once in the proposed steps.
@@ -425,7 +425,7 @@ Returns the complete decided proposal with its new `ETag`. `created_plan_version
 - Requests and responses use UTF-8 JSON and `snake_case` field names.
 - Unknown request fields return `422 Unprocessable Content`.
 - Required strings are trimmed and must remain non-empty. Lengths count Unicode code points.
-- IDs are server-generated lowercase UUIDv7 strings and are opaque to clients.
+- IDs are server-generated lowercase UUIDv4 strings and are opaque to clients.
 - Timestamps are server-generated RFC 3339 UTC strings with millisecond precision.
 - Single-resource responses return the resource directly.
 - Collections return `{ "items": [], "next_cursor": null }` and accept `limit` from 1 to 100, default 25, plus an opaque `cursor` from the preceding response.

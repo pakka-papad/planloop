@@ -1,8 +1,14 @@
 import { createTestHarness } from "wrangler"
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "vitest"
 
-const PLAN_ID = "0199b000-0001-7000-8000-000000000001"
-const CURRENT_VERSION_ID = "0199b100-0001-7000-8000-000000000002"
+const PLAN_ID = "0199b000-0001-4000-8000-000000000001"
+const CURRENT_VERSION_ID = "0199b100-0001-4000-8000-000000000002"
+const PAYMENT_PLAN_ID = "0199b000-0002-4000-8000-000000000002"
+const KAFKA_PLAN_ID = "0199b000-0003-4000-8000-000000000003"
+
+function encodedCursor(value: unknown): string {
+  return Buffer.from(JSON.stringify(value)).toString("base64url")
+}
 
 const server = createTestHarness({
   workers: [{ configPath: "./dist/planloop/wrangler.json" }],
@@ -21,7 +27,7 @@ async function seedActionPlan(database: D1Database): Promise<void> {
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
-        "0199b100-0001-7000-8000-000000000001",
+        "0199b100-0001-4000-8000-000000000001",
         PLAN_ID,
         1,
         "Elevated checkout latency",
@@ -51,8 +57,8 @@ async function seedActionPlan(database: D1Database): Promise<void> {
          VALUES (?, ?, ?, ?, ?)`,
       )
       .bind(
-        "0199b200-0001-7000-8000-000000000001",
-        "0199b100-0001-7000-8000-000000000001",
+        "0199b200-0001-4000-8000-000000000001",
+        "0199b100-0001-4000-8000-000000000001",
         1,
         "Confirm the latency increase",
         "Compare checkout latency and error rates with the normal regional baseline.",
@@ -64,7 +70,7 @@ async function seedActionPlan(database: D1Database): Promise<void> {
          VALUES (?, ?, ?, ?, ?)`,
       )
       .bind(
-        "0199b200-0002-7000-8000-000000000002",
+        "0199b200-0002-4000-8000-000000000002",
         CURRENT_VERSION_ID,
         2,
         "Check downstream dependencies",
@@ -77,11 +83,73 @@ async function seedActionPlan(database: D1Database): Promise<void> {
          VALUES (?, ?, ?, ?, ?)`,
       )
       .bind(
-        "0199b200-0002-7000-8000-000000000001",
+        "0199b200-0002-4000-8000-000000000001",
         CURRENT_VERSION_ID,
         1,
         "Measure customer impact",
         "Segment checkout latency, timeouts, and completion rate by region and client platform.",
+      ),
+    database
+      .prepare("INSERT INTO action_plans (id, created_at, created_by) VALUES (?, ?, ?)")
+      .bind(PAYMENT_PLAN_ID, "2026-09-01T10:00:00.000Z", null),
+    database
+      .prepare(
+        `INSERT INTO action_plan_versions
+           (id, plan_id, version, name, use_when, approved_at, approved_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        "0199b100-0002-4000-8000-000000000001",
+        PAYMENT_PLAN_ID,
+        1,
+        "Payment authorization decline spike",
+        "Use when legitimate card authorizations decline above their normal baseline.",
+        "2026-09-01T10:00:00.000Z",
+        null,
+      ),
+    database
+      .prepare(
+        `INSERT INTO action_plan_steps
+           (id, plan_version_id, position, title, description)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        "0199b200-0003-4000-8000-000000000001",
+        "0199b100-0002-4000-8000-000000000001",
+        1,
+        "Classify processor responses",
+        "Separate issuer declines from processor, routing, or integration failures.",
+      ),
+    database
+      .prepare("INSERT INTO action_plans (id, created_at, created_by) VALUES (?, ?, ?)")
+      .bind(KAFKA_PLAN_ID, "2026-09-01T10:00:00.000Z", null),
+    database
+      .prepare(
+        `INSERT INTO action_plan_versions
+           (id, plan_id, version, name, use_when, approved_at, approved_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        "0199b100-0003-4000-8000-000000000001",
+        KAFKA_PLAN_ID,
+        1,
+        "Kafka consumer lag growth",
+        "Use when a consumer group is no longer keeping pace with production traffic.",
+        "2026-09-01T10:00:00.000Z",
+        null,
+      ),
+    database
+      .prepare(
+        `INSERT INTO action_plan_steps
+           (id, plan_version_id, position, title, description)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        "0199b200-0004-4000-8000-000000000001",
+        "0199b100-0003-4000-8000-000000000001",
+        1,
+        "Confirm lag scope",
+        "Measure lag by consumer group, topic, partition, and production region.",
       ),
   ])
 }
@@ -122,14 +190,14 @@ test("returns the current action-plan version with ordered steps", async () => {
         "Use when checkout requests have sustained latency or timeout increases in any production region.",
       steps: [
         {
-          id: "0199b200-0002-7000-8000-000000000001",
+          id: "0199b200-0002-4000-8000-000000000001",
           position: 1,
           title: "Measure customer impact",
           description:
             "Segment checkout latency, timeouts, and completion rate by region and client platform.",
         },
         {
-          id: "0199b200-0002-7000-8000-000000000002",
+          id: "0199b200-0002-4000-8000-000000000002",
           position: 2,
           title: "Check downstream dependencies",
           description:
@@ -142,9 +210,107 @@ test("returns the current action-plan version with ordered steps", async () => {
   })
 })
 
+test("lists action plans in stable pages without steps", async () => {
+  const firstResponse = await server.fetch("/api/v1/action-plans?limit=2")
+  const firstPage = (await firstResponse.json()) as {
+    items: Array<Record<string, unknown>>
+    next_cursor: string | null
+  }
+
+  expect(firstResponse.status).toBe(200)
+  expect(firstPage.items).toEqual([
+    {
+      id: KAFKA_PLAN_ID,
+      created_at: "2026-09-01T10:00:00.000Z",
+      created_by: null,
+      current_version: {
+        id: "0199b100-0003-4000-8000-000000000001",
+        version: 1,
+        name: "Kafka consumer lag growth",
+        use_when: "Use when a consumer group is no longer keeping pace with production traffic.",
+        approved_at: "2026-09-01T10:00:00.000Z",
+      },
+    },
+    {
+      id: PAYMENT_PLAN_ID,
+      created_at: "2026-09-01T10:00:00.000Z",
+      created_by: null,
+      current_version: {
+        id: "0199b100-0002-4000-8000-000000000001",
+        version: 1,
+        name: "Payment authorization decline spike",
+        use_when: "Use when legitimate card authorizations decline above their normal baseline.",
+        approved_at: "2026-09-01T10:00:00.000Z",
+      },
+    },
+  ])
+  expect(firstPage.next_cursor).toEqual(expect.any(String))
+
+  const secondResponse = await server.fetch(
+    `/api/v1/action-plans?limit=2&cursor=${encodeURIComponent(firstPage.next_cursor ?? "")}`,
+  )
+
+  expect(secondResponse.status).toBe(200)
+  expect(await secondResponse.json()).toEqual({
+    items: [
+      {
+        id: PLAN_ID,
+        created_at: "2026-08-01T09:00:00.000Z",
+        created_by: null,
+        current_version: {
+          id: CURRENT_VERSION_ID,
+          version: 2,
+          name: "Elevated checkout latency and timeouts",
+          use_when:
+            "Use when checkout requests have sustained latency or timeout increases in any production region.",
+          approved_at: "2026-08-18T14:30:00.000Z",
+        },
+      },
+    ],
+    next_cursor: null,
+  })
+})
+
+test.each([
+  ["limit", "/api/v1/action-plans?limit=0"],
+  ["limit", "/api/v1/action-plans?limit=1&limit=2"],
+  ["cursor", "/api/v1/action-plans?cursor=not-a-cursor"],
+  ["cursor", "/api/v1/action-plans?cursor=first&cursor=second"],
+  [
+    "cursor timestamp",
+    `/api/v1/action-plans?cursor=${encodedCursor({
+      createdAt: "2026-13-01T10:00:00.000Z",
+      id: PLAN_ID,
+    })}`,
+  ],
+  [
+    "cursor UUID",
+    `/api/v1/action-plans?cursor=${encodedCursor({
+      createdAt: "2026-09-01T10:00:00.000Z",
+      id: "not-a-uuid",
+    })}`,
+  ],
+  [
+    "cursor fields",
+    `/api/v1/action-plans?cursor=${encodedCursor({
+      createdAt: "2026-09-01T10:00:00.000Z",
+      id: PLAN_ID,
+      unexpected: true,
+    })}`,
+  ],
+])("rejects an invalid %s", async (field, path) => {
+  const response = await server.fetch(path)
+
+  expect(response.status).toBe(422)
+  expect(await response.json()).toMatchObject({
+    code: "validation_error",
+    errors: [{ field: field.startsWith("cursor") ? "cursor" : field }],
+  })
+})
+
 test("returns an RFC problem for an unknown action plan", async () => {
   const response = await server.fetch(
-    "/api/v1/action-plans/0199b000-9999-7000-8000-000000000999",
+    "/api/v1/action-plans/0199b000-9999-4000-8000-000000000999",
   )
 
   expect(response.status).toBe(404)
