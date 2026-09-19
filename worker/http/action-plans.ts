@@ -1,4 +1,6 @@
+import { getActionPlan } from "../application/action-plans"
 import type { ActionPlan, PlanVersion } from "../domain/action-plan"
+import { notFound } from "./problems"
 
 export interface PlanStepDto {
   readonly id: string
@@ -47,6 +49,19 @@ export interface ActionPlanSuggestionDto {
   readonly use_when: string
   readonly match_score: number
   readonly reason: string
+}
+
+export async function handleGetActionPlan(
+  database: D1Database,
+  planId: string,
+): Promise<Response> {
+  const actionPlan = await getActionPlan(database, planId)
+
+  if (actionPlan === null) {
+    return notFound("The requested action plan does not exist.")
+  }
+
+  return Response.json(toActionPlanDto(actionPlan))
 }
 
 export function toPlanVersionDto(version: PlanVersion): PlanVersionDto {

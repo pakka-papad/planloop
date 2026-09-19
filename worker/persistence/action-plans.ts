@@ -24,6 +24,45 @@ export interface ActionPlanStepRow {
   description: string
 }
 
+export async function findActionPlanById(
+  database: D1Database,
+  planId: string,
+): Promise<ActionPlan | null> {
+  const plan = await database
+    .prepare("SELECT id, created_at, created_by FROM action_plans WHERE id = ?")
+    .bind(planId)
+    .first<ActionPlanRow>()
+
+  if (plan === null) return null
+
+  const version = await database
+    .prepare(
+      `SELECT id, plan_id, version, name, use_when, approved_at, approved_by
+       FROM action_plan_versions
+       WHERE plan_id = ?
+       ORDER BY version DESC
+       LIMIT 1`,
+    )
+    .bind(planId)
+    .first<ActionPlanVersionRow>()
+
+  if (version === null) throw new Error(`Action plan ${planId} has no approved version`)
+
+  const { results: steps } = await database
+    .prepare(
+      `SELECT id, plan_version_id, position, title, description
+       FROM action_plan_steps
+       WHERE plan_version_id = ?
+       ORDER BY position`,
+    )
+    .bind(version.id)
+    .all<ActionPlanStepRow>()
+
+  if (steps.length === 0) throw new Error(`Action plan version ${version.id} has no steps`)
+
+  return toActionPlan(plan, toPlanVersion(version, steps))
+}
+
 export function toPlanStep(row: ActionPlanStepRow): PlanStep {
   return {
     id: row.id,

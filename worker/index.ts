@@ -1,22 +1,15 @@
 export { CloseIncidentWorkflow } from "./workflow"
 
+import { internalError } from "./http/problems"
+import { route } from "./http/router"
+
 export default {
   async fetch(request, env): Promise<Response> {
-    const url = new URL(request.url)
-
-    if (request.method === "GET" && url.pathname === "/api/health") {
-      const row = await env.DB.prepare("SELECT 1 AS ready").first<{ ready: number }>()
-
-      return Response.json({
-        status: "ok",
-        services: {
-          d1: row?.ready === 1 ? "ready" : "unavailable",
-          workflows: env.CLOSE_INCIDENT_WORKFLOW ? "ready" : "unavailable",
-          ai: "live-opt-in",
-        },
-      })
+    try {
+      return await route(request, env)
+    } catch (error) {
+      console.error(error)
+      return internalError()
     }
-
-    return Response.json({ error: "Not found" }, { status: 404 })
   },
 } satisfies ExportedHandler<Env>
