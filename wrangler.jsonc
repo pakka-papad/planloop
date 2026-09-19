@@ -1,0 +1,28 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "planloop",
+  "main": "./worker/index.ts",
+  "compatibility_date": "2026-09-19",
+  "assets": {
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "planloop-local",
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ],
+  "workflows": [
+    {
+      "name": "close-incident",
+      "binding": "CLOSE_INCIDENT_WORKFLOW",
+      "class_name": "CloseIncidentWorkflow"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  },
+  "upload_source_maps": true
+}
