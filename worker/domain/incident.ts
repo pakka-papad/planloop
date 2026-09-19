@@ -33,3 +33,16 @@ export interface Incident {
   readonly closedAt: UtcTimestamp | null
   readonly closedBy: string | null
 }
+
+export interface IncidentSummary {
+  readonly id: Uuid
+  readonly title: string
+  readonly symptoms: string
+  readonly status: IncidentStatus
+  readonly pinnedPlanVersion: Omit<PlanVersion, "steps">
+  readonly reviewProposalId: Uuid | null
+  readonly createdAt: UtcTimestamp
+  readonly createdBy: string | null
+  readonly closedAt: UtcTimestamp | null
+  readonly closedBy: string | null
+}

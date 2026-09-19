@@ -5,6 +5,7 @@ import type {
   ActionRecord,
   ActionRecordType,
   Incident,
+  IncidentSummary,
   IncidentStatus,
 } from "../domain/incident"
 import type { ContributingIncident } from "../domain/review-proposal"
@@ -33,6 +34,16 @@ export interface ActionRecordRow {
   reason: string | null
   recorded_at: string
   recorded_by: string | null
+}
+
+interface IncidentSummaryRow extends IncidentRow {
+  version_id: string
+  plan_id: string
+  version: number
+  name: string
+  use_when: string
+  approved_at: string
+  approved_by: string | null
 }
 
 function toIncidentStatus(value: string): IncidentStatus {
@@ -157,6 +168,75 @@ export async function findIncidentById(
     .all<ActionRecordRow>()
 
   return toIncident(incident, pinnedPlanVersion, actionRecords.map(toActionRecord))
+}
+
+export async function findIncidents(
+  database: D1Database,
+  status: IncidentStatus | null,
+  limit: number,
+  cursor: { readonly createdAt: string; readonly id: string } | null,
+): Promise<readonly IncidentSummary[]> {
+  const statusClause = status === null ? "" : "AND i.status = ?"
+  const cursorClause =
+    cursor === null
+      ? ""
+      : "AND (i.created_at < ? OR (i.created_at = ? AND i.id < ?))"
+  const parameters: unknown[] = []
+
+  if (status !== null) parameters.push(status)
+  if (cursor !== null) parameters.push(cursor.createdAt, cursor.createdAt, cursor.id)
+  parameters.push(limit)
+
+  const { results } = await database
+    .prepare(
+      `SELECT
+         i.id,
+         i.title,
+         i.symptoms,
+         i.status,
+         i.plan_version_id,
+         i.review_proposal_id,
+         i.created_at,
+         i.created_by,
+         i.closed_at,
+         i.closed_by,
+         v.id AS version_id,
+         v.plan_id,
+         v.version,
+         v.name,
+         v.use_when,
+         v.approved_at,
+         v.approved_by
+       FROM incidents i
+       JOIN action_plan_versions v ON v.id = i.plan_version_id
+       WHERE 1 = 1 ${statusClause} ${cursorClause}
+       ORDER BY i.created_at DESC, i.id DESC
+       LIMIT ?`,
+    )
+    .bind(...parameters)
+    .all<IncidentSummaryRow>()
+
+  return results.map((row) => ({
+    id: v.parse(UuidSchema, row.id),
+    title: row.title,
+    symptoms: row.symptoms,
+    status: toIncidentStatus(row.status),
+    pinnedPlanVersion: {
+      id: v.parse(UuidSchema, row.version_id),
+      planId: v.parse(UuidSchema, row.plan_id),
+      version: row.version,
+      name: row.name,
+      useWhen: row.use_when,
+      approvedAt: v.parse(UtcTimestampSchema, row.approved_at),
+      approvedBy: row.approved_by,
+    },
+    reviewProposalId:
+      row.review_proposal_id === null ? null : v.parse(UuidSchema, row.review_proposal_id),
+    createdAt: v.parse(UtcTimestampSchema, row.created_at),
+    createdBy: row.created_by,
+    closedAt: row.closed_at === null ? null : v.parse(UtcTimestampSchema, row.closed_at),
+    closedBy: row.closed_by,
+  }))
 }
 
 export function toContributingIncident(

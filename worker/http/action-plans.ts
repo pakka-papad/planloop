@@ -13,10 +13,10 @@ import type {
   PlanVersion,
 } from "../domain/action-plan"
 import { UuidSchema } from "../domain/scalars"
-import { decodeCursor, encodeCursor } from "./cursors"
+import { cursorParser, encodeCursor } from "./cursors"
 import { CreateActionPlanRequestSchema } from "./action-plan-schemas"
 import { notFound, validationProblem } from "./problems"
-import { parseQueryParam, schemaParser } from "./query-params"
+import { PageLimitSchema, parseQueryParam, schemaParser } from "./query-params"
 import { parseJsonBody } from "./validation"
 
 export interface PlanStepDto {
@@ -72,22 +72,6 @@ export interface ActionPlanSuggestionDto {
   readonly reason: string
 }
 
-const ListActionPlansLimitSchema = v.pipe(
-  v.string(),
-  v.regex(/^(?:0|[1-9]\d*)$/),
-  v.transform(Number),
-  v.safeInteger(),
-  v.minValue(1),
-  v.maxValue(100),
-)
-
-function parseListActionPlansCursor(value: string): ListActionPlansCursor | undefined {
-  const decoded = decodeCursor(value)
-  const result = v.safeParse(ListActionPlansCursorSchema, decoded)
-
-  return result.success ? result.output : undefined
-}
-
 export async function handleListActionPlans(
   request: Request,
   database: D1Database,
@@ -97,7 +81,7 @@ export async function handleListActionPlans(
     searchParams,
     "limit",
     25,
-    schemaParser(ListActionPlansLimitSchema),
+    schemaParser(PageLimitSchema),
     "Must be a single integer between 1 and 100.",
   )
 
@@ -107,7 +91,7 @@ export async function handleListActionPlans(
     searchParams,
     "cursor",
     null,
-    parseListActionPlansCursor,
+    cursorParser(ListActionPlansCursorSchema),
     "Must be a cursor returned by this endpoint.",
   )
 

@@ -2,6 +2,15 @@ import * as v from "valibot"
 
 import type { FieldError } from "./problems"
 
+export const PageLimitSchema = v.pipe(
+  v.string(),
+  v.regex(/^(?:0|[1-9]\d*)$/),
+  v.transform(Number),
+  v.safeInteger(),
+  v.minValue(1),
+  v.maxValue(100),
+)
+
 export type ParsedQueryParam<T> =
   | { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly error: FieldError }

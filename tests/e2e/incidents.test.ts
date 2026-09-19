@@ -4,6 +4,9 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "vitest
 const PLAN_ID = "0199c000-0001-4000-8000-000000000001"
 const PREVIOUS_VERSION_ID = "0199c100-0001-4000-8000-000000000001"
 const CURRENT_VERSION_ID = "0199c100-0001-4000-8000-000000000002"
+const FIRST_INCIDENT_ID = "0199e000-0001-4000-8000-000000000001"
+const SECOND_INCIDENT_ID = "0199e000-0002-4000-8000-000000000002"
+const THIRD_INCIDENT_ID = "0199e000-0003-4000-8000-000000000003"
 
 const server = createTestHarness({
   workers: [{ configPath: "./dist/planloop/wrangler.json" }],
@@ -84,6 +87,54 @@ async function seedActionPlan(database: D1Database): Promise<void> {
         "Inspect identity dependencies",
         "Check identity provider latency, errors, and token validation failures.",
       ),
+  ])
+}
+
+async function seedIncidents(database: D1Database): Promise<void> {
+  const statement = database.prepare(
+    `INSERT INTO incidents
+       (id, title, symptoms, status, plan_version_id, review_proposal_id,
+        created_at, created_by, closed_at, closed_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  )
+
+  await database.batch([
+    statement.bind(
+      FIRST_INCIDENT_ID,
+      "Authentication failures in account settings",
+      "Users cannot update account settings because token validation is failing.",
+      "open",
+      PREVIOUS_VERSION_ID,
+      null,
+      "2026-09-18T09:00:00.000Z",
+      null,
+      null,
+      null,
+    ),
+    statement.bind(
+      SECOND_INCIDENT_ID,
+      "Authentication errors during checkout",
+      "Checkout authentication errors increased in the European region.",
+      "closed",
+      CURRENT_VERSION_ID,
+      null,
+      "2026-09-19T10:00:00.000Z",
+      null,
+      "2026-09-19T11:00:00.000Z",
+      null,
+    ),
+    statement.bind(
+      THIRD_INCIDENT_ID,
+      "Authentication errors in mobile clients",
+      "Mobile clients are receiving token validation failures after sign-in.",
+      "open",
+      CURRENT_VERSION_ID,
+      null,
+      "2026-09-19T10:00:00.000Z",
+      null,
+      null,
+      null,
+    ),
   ])
 }
 
@@ -285,5 +336,85 @@ test.each([
   expect(await response.json()).toMatchObject({
     code: "not_found",
     detail: "The requested incident does not exist.",
+  })
+})
+
+test("lists incidents in stable pages without plan steps or action records", async () => {
+  const env = await worker.getEnv()
+  await seedIncidents(env.DB)
+
+  const firstResponse = await server.fetch("/api/v1/incidents?limit=2")
+  const firstPage = (await firstResponse.json()) as {
+    items: Array<{
+      id: string
+      pinned_plan_version: Record<string, unknown>
+      action_records?: unknown
+    }>
+    next_cursor: string | null
+  }
+
+  expect(firstResponse.status).toBe(200)
+  expect(firstPage.items.map((item) => item.id)).toEqual([
+    THIRD_INCIDENT_ID,
+    SECOND_INCIDENT_ID,
+  ])
+  expect(firstPage.items[0]).toEqual({
+    id: THIRD_INCIDENT_ID,
+    title: "Authentication errors in mobile clients",
+    symptoms: "Mobile clients are receiving token validation failures after sign-in.",
+    status: "open",
+    pinned_plan_version: {
+      id: CURRENT_VERSION_ID,
+      plan_id: PLAN_ID,
+      version: 2,
+      name: "Elevated authentication errors",
+      use_when: "Use when authentication errors rise across customer-facing services.",
+      approved_at: "2026-09-10T11:30:00.000Z",
+      approved_by: null,
+    },
+    review_proposal_id: null,
+    created_at: "2026-09-19T10:00:00.000Z",
+    created_by: null,
+    closed_at: null,
+    closed_by: null,
+  })
+  expect(firstPage.items[0].pinned_plan_version).not.toHaveProperty("steps")
+  expect(firstPage.items[0]).not.toHaveProperty("action_records")
+  expect(firstPage.next_cursor).toEqual(expect.any(String))
+
+  const secondResponse = await server.fetch(
+    `/api/v1/incidents?limit=2&cursor=${encodeURIComponent(firstPage.next_cursor ?? "")}`,
+  )
+
+  expect(secondResponse.status).toBe(200)
+  expect(await secondResponse.json()).toMatchObject({
+    items: [{ id: FIRST_INCIDENT_ID }],
+    next_cursor: null,
+  })
+})
+
+test("filters incidents by status", async () => {
+  const env = await worker.getEnv()
+  await seedIncidents(env.DB)
+
+  const response = await server.fetch("/api/v1/incidents?status=closed")
+  const page = (await response.json()) as { items: Array<{ id: string }> }
+
+  expect(response.status).toBe(200)
+  expect(page.items.map((item) => item.id)).toEqual([SECOND_INCIDENT_ID])
+})
+
+test.each([
+  ["status", "/api/v1/incidents?status=pending"],
+  ["status", "/api/v1/incidents?status=open&status=closed"],
+  ["limit", "/api/v1/incidents?limit=0"],
+  ["cursor", "/api/v1/incidents?cursor=not-a-cursor"],
+])("rejects an invalid incident-list %s", async (field, path) => {
+  const response = await server.fetch(path)
+
+  expect(response.status).toBe(422)
+  expect(await response.json()).toMatchObject({
+    code: "validation_error",
+    errors: [{ field }],
   })
 })

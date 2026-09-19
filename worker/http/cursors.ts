@@ -1,3 +1,5 @@
+import * as v from "valibot"
+
 function toBinaryString(bytes: Uint8Array): string {
   let result = ""
 
@@ -23,5 +25,15 @@ export function decodeCursor(value: string): unknown | undefined {
     return JSON.parse(new TextDecoder().decode(bytes)) as unknown
   } catch {
     return undefined
+  }
+}
+
+export function cursorParser<TSchema extends v.GenericSchema>(
+  schema: TSchema,
+): (value: string) => v.InferOutput<TSchema> | undefined {
+  return (value) => {
+    const result = v.safeParse(schema, decodeCursor(value))
+
+    return result.success ? result.output : undefined
   }
 }

@@ -1,11 +1,24 @@
 import * as v from "valibot"
 
-import { createIncident, getIncident } from "../application/incidents"
-import type { ActionRecord, Incident } from "../domain/incident"
+import {
+  createIncident,
+  getIncident,
+  listIncidents,
+  ListIncidentsCursorSchema,
+  type ListIncidentsCursor,
+} from "../application/incidents"
+import type {
+  ActionRecord,
+  Incident,
+  IncidentStatus,
+  IncidentSummary,
+} from "../domain/incident"
 import { UuidSchema } from "../domain/scalars"
+import { cursorParser, encodeCursor } from "./cursors"
 import { CreateIncidentRequestSchema } from "./incident-schemas"
 import { notFound, problem, validationProblem } from "./problems"
 import { toPlanVersionDto, type PlanVersionDto } from "./action-plans"
+import { PageLimitSchema, parseQueryParam, schemaParser } from "./query-params"
 import { parseJsonBody } from "./validation"
 
 export type ActionRecordTypeDto =
@@ -32,6 +45,19 @@ export interface IncidentDto {
   readonly status: "open" | "closed"
   readonly pinned_plan_version: PlanVersionDto
   readonly action_records: readonly ActionRecordDto[]
+  readonly review_proposal_id: string | null
+  readonly created_at: string
+  readonly created_by: string | null
+  readonly closed_at: string | null
+  readonly closed_by: string | null
+}
+
+export interface IncidentSummaryDto {
+  readonly id: string
+  readonly title: string
+  readonly symptoms: string
+  readonly status: "open" | "closed"
+  readonly pinned_plan_version: Omit<PlanVersionDto, "steps">
   readonly review_proposal_id: string | null
   readonly created_at: string
   readonly created_by: string | null
@@ -105,6 +131,54 @@ export async function handleGetIncident(
   return Response.json(toIncidentDto(incident))
 }
 
+export async function handleListIncidents(
+  request: Request,
+  database: D1Database,
+): Promise<Response> {
+  const searchParams = new URL(request.url).searchParams
+  const status = parseQueryParam<IncidentStatus | null>(
+    searchParams,
+    "status",
+    null,
+    schemaParser(v.picklist(["open", "closed"])),
+    "Must be either open or closed.",
+  )
+
+  if (!status.ok) return validationProblem([status.error])
+
+  const limit = parseQueryParam(
+    searchParams,
+    "limit",
+    25,
+    schemaParser(PageLimitSchema),
+    "Must be a single integer between 1 and 100.",
+  )
+
+  if (!limit.ok) return validationProblem([limit.error])
+
+  const cursor = parseQueryParam<ListIncidentsCursor | null>(
+    searchParams,
+    "cursor",
+    null,
+    cursorParser(ListIncidentsCursorSchema),
+    "Must be a cursor returned by this endpoint.",
+  )
+
+  if (!cursor.ok) return validationProblem([cursor.error])
+
+  const page = await listIncidents(
+    database,
+    status.value,
+    limit.value,
+    cursor.value,
+  )
+
+  return Response.json({
+    items: page.items.map(toIncidentSummaryDto),
+    next_cursor: page.nextCursor === null ? null : encodeCursor(page.nextCursor),
+  })
+}
+
 export function toActionRecordDto(record: ActionRecord): ActionRecordDto {
   return {
     id: record.id,
@@ -126,6 +200,29 @@ export function toIncidentDto(incident: Incident): IncidentDto {
     status: incident.status,
     pinned_plan_version: toPlanVersionDto(incident.pinnedPlanVersion),
     action_records: incident.actionRecords.map(toActionRecordDto),
+    review_proposal_id: incident.reviewProposalId,
+    created_at: incident.createdAt,
+    created_by: incident.createdBy,
+    closed_at: incident.closedAt,
+    closed_by: incident.closedBy,
+  }
+}
+
+function toIncidentSummaryDto(incident: IncidentSummary): IncidentSummaryDto {
+  return {
+    id: incident.id,
+    title: incident.title,
+    symptoms: incident.symptoms,
+    status: incident.status,
+    pinned_plan_version: {
+      id: incident.pinnedPlanVersion.id,
+      plan_id: incident.pinnedPlanVersion.planId,
+      version: incident.pinnedPlanVersion.version,
+      name: incident.pinnedPlanVersion.name,
+      use_when: incident.pinnedPlanVersion.useWhen,
+      approved_at: incident.pinnedPlanVersion.approvedAt,
+      approved_by: incident.pinnedPlanVersion.approvedBy,
+    },
     review_proposal_id: incident.reviewProposalId,
     created_at: incident.createdAt,
     created_by: incident.createdBy,
