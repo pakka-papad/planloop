@@ -1,13 +1,6 @@
 import * as v from "valibot"
 
-function requiredString(maxCodePoints: number) {
-  return v.pipe(
-    v.string("Must be a string."),
-    v.trim(),
-    v.minCodePoints(1, "Must not be empty."),
-    v.maxCodePoints(maxCodePoints, `Must contain at most ${maxCodePoints} characters.`),
-  )
-}
+import { requiredString } from "./validation"
 
 const CreateActionPlanStepSchema = v.strictObject({
   title: requiredString(200),

@@ -12,7 +12,7 @@ export interface FieldError {
   readonly message: string
 }
 
-export function problem(details: ProblemDetails): Response {
+export function problem<T extends ProblemDetails>(details: T): Response {
   return new Response(JSON.stringify(details), {
     status: details.status,
     headers: { "content-type": "application/problem+json" },

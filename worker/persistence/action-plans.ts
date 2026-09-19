@@ -43,6 +43,15 @@ interface ActionPlanSummaryRow {
   approved_at: string
 }
 
+interface ActionPlanVersionSelectionRow extends ActionPlanVersionRow {
+  current_version_id: string
+}
+
+export interface ActionPlanVersionSelection {
+  readonly version: PlanVersion
+  readonly currentVersionId: Uuid
+}
+
 export async function findActionPlans(
   database: D1Database,
   limit: number,
@@ -131,6 +140,53 @@ export async function insertActionPlan(
         ),
     ),
   ])
+}
+
+export async function findActionPlanVersionSelection(
+  database: D1Database,
+  versionId: Uuid,
+): Promise<ActionPlanVersionSelection | null> {
+  const version = await database
+    .prepare(
+      `SELECT
+         v.id,
+         v.plan_id,
+         v.version,
+         v.name,
+         v.use_when,
+         v.approved_at,
+         v.approved_by,
+         (
+           SELECT current.id
+           FROM action_plan_versions current
+           WHERE current.plan_id = v.plan_id
+           ORDER BY current.version DESC
+           LIMIT 1
+         ) AS current_version_id
+       FROM action_plan_versions v
+       WHERE v.id = ?`,
+    )
+    .bind(versionId)
+    .first<ActionPlanVersionSelectionRow>()
+
+  if (version === null) return null
+
+  const { results: steps } = await database
+    .prepare(
+      `SELECT id, plan_version_id, position, title, description
+       FROM action_plan_steps
+       WHERE plan_version_id = ?
+       ORDER BY position`,
+    )
+    .bind(version.id)
+    .all<ActionPlanStepRow>()
+
+  if (steps.length === 0) throw new Error(`Action plan version ${version.id} has no steps`)
+
+  return {
+    version: toPlanVersion(version, steps),
+    currentVersionId: v.parse(UuidSchema, version.current_version_id),
+  }
 }
 
 export async function findActionPlanById(

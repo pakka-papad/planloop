@@ -1,5 +1,9 @@
+import { createIncident } from "../application/incidents"
 import type { ActionRecord, Incident } from "../domain/incident"
+import { CreateIncidentRequestSchema } from "./incident-schemas"
+import { problem, validationProblem } from "./problems"
 import { toPlanVersionDto, type PlanVersionDto } from "./action-plans"
+import { parseJsonBody } from "./validation"
 
 export type ActionRecordTypeDto =
   | "step_completed"
@@ -32,17 +36,51 @@ export interface IncidentDto {
   readonly closed_by: string | null
 }
 
-export interface CreateIncidentRequest {
-  readonly title: string
-  readonly symptoms: string
-  readonly plan_version_id: string
-}
-
 export interface CreateActionRecordRequest {
   readonly type: ActionRecordTypeDto
   readonly plan_step_id?: string
   readonly details?: string
   readonly reason?: string
+}
+
+export async function handleCreateIncident(
+  request: Request,
+  database: D1Database,
+): Promise<Response> {
+  const body = await parseJsonBody(request, CreateIncidentRequestSchema)
+
+  if (!body.ok) return body.response
+
+  const result = await createIncident(database, {
+    title: body.value.title,
+    symptoms: body.value.symptoms,
+    planVersionId: body.value.plan_version_id,
+  })
+
+  if (result.status === "version_not_found") {
+    return validationProblem([
+      {
+        field: "plan_version_id",
+        message: "Must identify an existing action plan version.",
+      },
+    ])
+  }
+
+  if (result.status === "version_superseded") {
+    return problem({
+      type: "urn:planloop:problem:plan-version-superseded",
+      title: "Action plan version superseded",
+      status: 409,
+      detail: "A newer action plan version is available.",
+      code: "plan_version_superseded",
+      current_version_id: result.currentVersionId,
+    })
+  }
+
+  return Response.json(toIncidentDto(result.incident), {
+    status: 201,
+    headers: { location: `/api/v1/incidents/${result.incident.id}` },
+  })
 }
 
 export function toActionRecordDto(record: ActionRecord): ActionRecordDto {

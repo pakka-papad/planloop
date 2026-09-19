@@ -155,7 +155,8 @@ Constraints:
 - `title`: required, 1–200 characters.
 - `symptoms`: required, 1–4000 characters.
 - `plan_version_id`: required UUIDv4 and must be a current approved version.
-- A version superseded between suggestion and incident creation returns `409` with code `plan_version_superseded` and the current version ID.
+- An unknown `plan_version_id` returns `422` with a field validation error.
+- A version superseded between suggestion and incident creation returns `409` with code `plan_version_superseded` and the current version ID in `current_version_id`.
 
 The server pins the supplied version permanently and creates an open incident with `review_proposal_id: null`. It does not run plan suggestion again.
 

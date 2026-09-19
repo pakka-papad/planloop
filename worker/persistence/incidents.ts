@@ -1,3 +1,5 @@
+import * as v from "valibot"
+
 import type { PlanVersion } from "../domain/action-plan"
 import type {
   ActionRecord,
@@ -6,6 +8,7 @@ import type {
   IncidentStatus,
 } from "../domain/incident"
 import type { ContributingIncident } from "../domain/review-proposal"
+import { UtcTimestampSchema, UuidSchema } from "../domain/scalars"
 
 export interface IncidentRow {
   id: string
@@ -50,13 +53,13 @@ function toActionRecordType(value: string): ActionRecordType {
 
 export function toActionRecord(row: ActionRecordRow): ActionRecord {
   return {
-    id: row.id,
-    incidentId: row.incident_id,
+    id: v.parse(UuidSchema, row.id),
+    incidentId: v.parse(UuidSchema, row.incident_id),
     type: toActionRecordType(row.type),
-    planStepId: row.plan_step_id,
+    planStepId: row.plan_step_id === null ? null : v.parse(UuidSchema, row.plan_step_id),
     details: row.details,
     reason: row.reason,
-    recordedAt: row.recorded_at,
+    recordedAt: v.parse(UtcTimestampSchema, row.recorded_at),
     recordedBy: row.recorded_by,
   }
 }
@@ -67,18 +70,54 @@ export function toIncident(
   actionRecords: readonly ActionRecord[],
 ): Incident {
   return {
-    id: row.id,
+    id: v.parse(UuidSchema, row.id),
     title: row.title,
     symptoms: row.symptoms,
     status: toIncidentStatus(row.status),
     pinnedPlanVersion,
     actionRecords,
-    reviewProposalId: row.review_proposal_id,
-    createdAt: row.created_at,
+    reviewProposalId:
+      row.review_proposal_id === null ? null : v.parse(UuidSchema, row.review_proposal_id),
+    createdAt: v.parse(UtcTimestampSchema, row.created_at),
     createdBy: row.created_by,
-    closedAt: row.closed_at,
+    closedAt: row.closed_at === null ? null : v.parse(UtcTimestampSchema, row.closed_at),
     closedBy: row.closed_by,
   }
+}
+
+export async function insertIncident(
+  database: D1Database,
+  incident: Incident,
+): Promise<boolean> {
+  const result = await database
+    .prepare(
+      `INSERT INTO incidents
+         (id, title, symptoms, status, plan_version_id, review_proposal_id,
+          created_at, created_by, closed_at, closed_by)
+       SELECT ?, ?, ?, ?, selected.id, ?, ?, ?, ?, ?
+       FROM action_plan_versions selected
+       WHERE selected.id = ?
+         AND selected.version = (
+           SELECT MAX(current.version)
+           FROM action_plan_versions current
+           WHERE current.plan_id = selected.plan_id
+         )`,
+    )
+    .bind(
+      incident.id,
+      incident.title,
+      incident.symptoms,
+      incident.status,
+      incident.reviewProposalId,
+      incident.createdAt,
+      incident.createdBy,
+      incident.closedAt,
+      incident.closedBy,
+      incident.pinnedPlanVersion.id,
+    )
+    .run()
+
+  return result.meta.changes === 1
 }
 
 export function toContributingIncident(
@@ -90,10 +129,10 @@ export function toContributingIncident(
   }
 
   return {
-    id: row.id,
+    id: v.parse(UuidSchema, row.id),
     title: row.title,
     symptoms: row.symptoms,
     pinnedPlanVersion,
-    closedAt: row.closed_at,
+    closedAt: v.parse(UtcTimestampSchema, row.closed_at),
   }
 }

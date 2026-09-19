@@ -2,6 +2,15 @@ import * as v from "valibot"
 
 import { invalidJson, validationProblem, type FieldError } from "./problems"
 
+export function requiredString(maxCodePoints: number) {
+  return v.pipe(
+    v.string("Must be a string."),
+    v.trim(),
+    v.minCodePoints(1, "Must not be empty."),
+    v.maxCodePoints(maxCodePoints, `Must contain at most ${maxCodePoints} characters.`),
+  )
+}
+
 export type ParsedJsonBody<T> =
   | { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly response: Response }

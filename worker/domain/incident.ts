@@ -1,4 +1,5 @@
 import type { PlanVersion } from "./action-plan"
+import type { UtcTimestamp, Uuid } from "./scalars"
 
 export type IncidentStatus = "open" | "closed"
 
@@ -9,26 +10,26 @@ export type ActionRecordType =
   | "additional_action"
 
 export interface ActionRecord {
-  readonly id: string
-  readonly incidentId: string
+  readonly id: Uuid
+  readonly incidentId: Uuid
   readonly type: ActionRecordType
-  readonly planStepId: string | null
+  readonly planStepId: Uuid | null
   readonly details: string | null
   readonly reason: string | null
-  readonly recordedAt: string
+  readonly recordedAt: UtcTimestamp
   readonly recordedBy: string | null
 }
 
 export interface Incident {
-  readonly id: string
+  readonly id: Uuid
   readonly title: string
   readonly symptoms: string
   readonly status: IncidentStatus
   readonly pinnedPlanVersion: PlanVersion
   readonly actionRecords: readonly ActionRecord[]
-  readonly reviewProposalId: string | null
-  readonly createdAt: string
+  readonly reviewProposalId: Uuid | null
+  readonly createdAt: UtcTimestamp
   readonly createdBy: string | null
-  readonly closedAt: string | null
+  readonly closedAt: UtcTimestamp | null
   readonly closedBy: string | null
 }
