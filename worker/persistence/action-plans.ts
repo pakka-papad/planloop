@@ -52,6 +52,25 @@ export interface ActionPlanVersionSelection {
   readonly currentVersionId: Uuid
 }
 
+async function findActionPlanSteps(
+  database: D1Database,
+  versionId: string,
+): Promise<readonly ActionPlanStepRow[]> {
+  const { results } = await database
+    .prepare(
+      `SELECT id, plan_version_id, position, title, description
+       FROM action_plan_steps
+       WHERE plan_version_id = ?
+       ORDER BY position`,
+    )
+    .bind(versionId)
+    .all<ActionPlanStepRow>()
+
+  if (results.length === 0) throw new Error(`Action plan version ${versionId} has no steps`)
+
+  return results
+}
+
 export async function findActionPlans(
   database: D1Database,
   limit: number,
@@ -171,22 +190,30 @@ export async function findActionPlanVersionSelection(
 
   if (version === null) return null
 
-  const { results: steps } = await database
-    .prepare(
-      `SELECT id, plan_version_id, position, title, description
-       FROM action_plan_steps
-       WHERE plan_version_id = ?
-       ORDER BY position`,
-    )
-    .bind(version.id)
-    .all<ActionPlanStepRow>()
-
-  if (steps.length === 0) throw new Error(`Action plan version ${version.id} has no steps`)
+  const steps = await findActionPlanSteps(database, version.id)
 
   return {
     version: toPlanVersion(version, steps),
     currentVersionId: v.parse(UuidSchema, version.current_version_id),
   }
+}
+
+export async function findActionPlanVersionById(
+  database: D1Database,
+  versionId: Uuid,
+): Promise<PlanVersion | null> {
+  const version = await database
+    .prepare(
+      `SELECT id, plan_id, version, name, use_when, approved_at, approved_by
+       FROM action_plan_versions
+       WHERE id = ?`,
+    )
+    .bind(versionId)
+    .first<ActionPlanVersionRow>()
+
+  if (version === null) return null
+
+  return toPlanVersion(version, await findActionPlanSteps(database, version.id))
 }
 
 export async function findActionPlanById(
@@ -213,19 +240,10 @@ export async function findActionPlanById(
 
   if (version === null) throw new Error(`Action plan ${planId} has no approved version`)
 
-  const { results: steps } = await database
-    .prepare(
-      `SELECT id, plan_version_id, position, title, description
-       FROM action_plan_steps
-       WHERE plan_version_id = ?
-       ORDER BY position`,
-    )
-    .bind(version.id)
-    .all<ActionPlanStepRow>()
-
-  if (steps.length === 0) throw new Error(`Action plan version ${version.id} has no steps`)
-
-  return toActionPlan(plan, toPlanVersion(version, steps))
+  return toActionPlan(
+    plan,
+    toPlanVersion(version, await findActionPlanSteps(database, version.id)),
+  )
 }
 
 export function toPlanStep(row: ActionPlanStepRow): PlanStep {

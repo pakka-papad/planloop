@@ -1,7 +1,7 @@
 import type { Incident } from "../domain/incident"
 import { currentUtcTimestamp, generateUuid, type Uuid } from "../domain/scalars"
 import { findActionPlanVersionSelection } from "../persistence/action-plans"
-import { insertIncident } from "../persistence/incidents"
+import { findIncidentById, insertIncident } from "../persistence/incidents"
 
 export interface CreateIncidentInput {
   readonly title: string
@@ -54,4 +54,11 @@ export async function createIncident(
         status: "version_superseded",
         currentVersionId: selection.currentVersionId,
       }
+}
+
+export function getIncident(
+  database: D1Database,
+  incidentId: Uuid,
+): Promise<Incident | null> {
+  return findIncidentById(database, incidentId)
 }

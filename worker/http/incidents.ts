@@ -1,7 +1,10 @@
-import { createIncident } from "../application/incidents"
+import * as v from "valibot"
+
+import { createIncident, getIncident } from "../application/incidents"
 import type { ActionRecord, Incident } from "../domain/incident"
+import { UuidSchema } from "../domain/scalars"
 import { CreateIncidentRequestSchema } from "./incident-schemas"
-import { problem, validationProblem } from "./problems"
+import { notFound, problem, validationProblem } from "./problems"
 import { toPlanVersionDto, type PlanVersionDto } from "./action-plans"
 import { parseJsonBody } from "./validation"
 
@@ -81,6 +84,25 @@ export async function handleCreateIncident(
     status: 201,
     headers: { location: `/api/v1/incidents/${result.incident.id}` },
   })
+}
+
+export async function handleGetIncident(
+  database: D1Database,
+  incidentId: string,
+): Promise<Response> {
+  const parsedIncidentId = v.safeParse(UuidSchema, incidentId)
+
+  if (!parsedIncidentId.success) {
+    return notFound("The requested incident does not exist.")
+  }
+
+  const incident = await getIncident(database, parsedIncidentId.output)
+
+  if (incident === null) {
+    return notFound("The requested incident does not exist.")
+  }
+
+  return Response.json(toIncidentDto(incident))
 }
 
 export function toActionRecordDto(record: ActionRecord): ActionRecordDto {

@@ -172,6 +172,66 @@ test("creates an open incident pinned to the selected current plan version", asy
     plan_version_id: CURRENT_VERSION_ID,
     review_proposal_id: null,
   })
+
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO action_records
+         (id, incident_id, type, plan_step_id, details, reason, recorded_at, recorded_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      "0199d000-0001-4000-8000-000000000002",
+      incident.id,
+      "step_modified",
+      "0199c200-0002-4000-8000-000000000002",
+      "Checked regional token validation errors before identity provider latency.",
+      "The error breakdown was needed to identify the affected dependency.",
+      "2026-09-20T10:15:00.000Z",
+      null,
+    ),
+    env.DB.prepare(
+      `INSERT INTO action_records
+         (id, incident_id, type, plan_step_id, details, reason, recorded_at, recorded_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      "0199d000-0001-4000-8000-000000000001",
+      incident.id,
+      "step_completed",
+      "0199c200-0002-4000-8000-000000000001",
+      "Confirmed elevated failures in checkout and account services.",
+      null,
+      "2026-09-20T10:10:00.000Z",
+      null,
+    ),
+  ])
+
+  const getResponse = await server.fetch(`/api/v1/incidents/${incident.id}`)
+
+  expect(getResponse.status).toBe(200)
+  expect(await getResponse.json()).toEqual({
+    ...incident,
+    action_records: [
+      {
+        id: "0199d000-0001-4000-8000-000000000001",
+        incident_id: incident.id,
+        type: "step_completed",
+        plan_step_id: "0199c200-0002-4000-8000-000000000001",
+        details: "Confirmed elevated failures in checkout and account services.",
+        reason: null,
+        recorded_at: "2026-09-20T10:10:00.000Z",
+        recorded_by: null,
+      },
+      {
+        id: "0199d000-0001-4000-8000-000000000002",
+        incident_id: incident.id,
+        type: "step_modified",
+        plan_step_id: "0199c200-0002-4000-8000-000000000002",
+        details: "Checked regional token validation errors before identity provider latency.",
+        reason: "The error breakdown was needed to identify the affected dependency.",
+        recorded_at: "2026-09-20T10:15:00.000Z",
+        recorded_by: null,
+      },
+    ],
+  })
 })
 
 test("rejects a superseded action plan version", async () => {
@@ -212,5 +272,18 @@ test("rejects an unknown action plan version", async () => {
         message: "Must identify an existing action plan version.",
       },
     ],
+  })
+})
+
+test.each([
+  "not-a-uuid",
+  "0199d000-9999-4000-8000-000000000999",
+])("returns not found for incident %s", async (incidentId) => {
+  const response = await server.fetch(`/api/v1/incidents/${incidentId}`)
+
+  expect(response.status).toBe(404)
+  expect(await response.json()).toMatchObject({
+    code: "not_found",
+    detail: "The requested incident does not exist.",
   })
 })

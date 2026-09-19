@@ -4,7 +4,7 @@ import {
   handleListActionPlans,
 } from "./action-plans"
 import { handleHealth } from "./health"
-import { handleCreateIncident } from "./incidents"
+import { handleCreateIncident, handleGetIncident } from "./incidents"
 import { notFound } from "./problems"
 
 type RouteHandler = (
@@ -45,6 +45,12 @@ const routes: readonly Route[] = [
     method: "POST",
     pattern: new URLPattern({ pathname: "/api/v1/incidents" }),
     handle: (request, env) => handleCreateIncident(request, env.DB),
+  },
+  {
+    method: "GET",
+    pattern: new URLPattern({ pathname: "/api/v1/incidents/:incidentId" }),
+    handle: (_request, env, match) =>
+      handleGetIncident(env.DB, match.pathname.groups.incidentId),
   },
 ]
 

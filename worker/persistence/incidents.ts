@@ -8,7 +8,8 @@ import type {
   IncidentStatus,
 } from "../domain/incident"
 import type { ContributingIncident } from "../domain/review-proposal"
-import { UtcTimestampSchema, UuidSchema } from "../domain/scalars"
+import { UtcTimestampSchema, UuidSchema, type Uuid } from "../domain/scalars"
+import { findActionPlanVersionById } from "./action-plans"
 
 export interface IncidentRow {
   id: string
@@ -118,6 +119,44 @@ export async function insertIncident(
     .run()
 
   return result.meta.changes === 1
+}
+
+export async function findIncidentById(
+  database: D1Database,
+  incidentId: Uuid,
+): Promise<Incident | null> {
+  const incident = await database
+    .prepare(
+      `SELECT id, title, symptoms, status, plan_version_id, review_proposal_id,
+              created_at, created_by, closed_at, closed_by
+       FROM incidents
+       WHERE id = ?`,
+    )
+    .bind(incidentId)
+    .first<IncidentRow>()
+
+  if (incident === null) return null
+
+  const pinnedPlanVersion = await findActionPlanVersionById(
+    database,
+    v.parse(UuidSchema, incident.plan_version_id),
+  )
+
+  if (pinnedPlanVersion === null) {
+    throw new Error(`Incident ${incident.id} references a missing action plan version`)
+  }
+
+  const { results: actionRecords } = await database
+    .prepare(
+      `SELECT id, incident_id, type, plan_step_id, details, reason, recorded_at, recorded_by
+       FROM action_records
+       WHERE incident_id = ?
+       ORDER BY recorded_at, id`,
+    )
+    .bind(incidentId)
+    .all<ActionRecordRow>()
+
+  return toIncident(incident, pinnedPlanVersion, actionRecords.map(toActionRecord))
 }
 
 export function toContributingIncident(
