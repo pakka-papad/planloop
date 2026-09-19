@@ -9,7 +9,6 @@ export interface ProblemDetails {
 
 export interface FieldError {
   readonly field: string
-  readonly code: string
   readonly message: string
 }
 
@@ -37,6 +36,16 @@ export function internalError(): Response {
     status: 500,
     detail: "An unexpected error occurred.",
     code: "internal_error",
+  })
+}
+
+export function invalidJson(): Response {
+  return problem({
+    type: "urn:planloop:problem:invalid-json",
+    title: "Invalid JSON",
+    status: 400,
+    detail: "The request body is not valid JSON.",
+    code: "invalid_json",
   })
 }
 

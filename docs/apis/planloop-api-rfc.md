@@ -443,7 +443,6 @@ Errors use `application/problem+json`:
   "errors": [
     {
       "field": "steps/0/title",
-      "code": "required",
       "message": "Must not be empty."
     }
   ]

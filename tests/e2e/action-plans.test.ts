@@ -210,6 +210,107 @@ test("returns the current action-plan version with ordered steps", async () => {
   })
 })
 
+test("creates an approved action plan and persists its ordered steps", async () => {
+  const response = await server.fetch("/api/v1/action-plans", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      name: "Elevated authentication errors",
+      use_when: "Use when authentication errors rise across one or more services.",
+      steps: [
+        {
+          title: "Assess impact",
+          description: "Confirm scope, affected services, and customer impact.",
+        },
+        {
+          title: "Inspect identity dependencies",
+          description: "Check identity provider latency, errors, and token validation failures.",
+        },
+      ],
+    }),
+  })
+  const created = (await response.json()) as {
+    id: string
+    created_at: string
+    current_version: {
+      id: string
+      approved_at: string
+      steps: Array<{ id: string; position: number }>
+    }
+  }
+
+  expect(response.status).toBe(201)
+  expect(response.headers.get("location")).toBe(`/api/v1/action-plans/${created.id}`)
+  expect(created).toMatchObject({
+    created_by: null,
+    current_version: {
+      plan_id: created.id,
+      version: 1,
+      name: "Elevated authentication errors",
+      use_when: "Use when authentication errors rise across one or more services.",
+      approved_by: null,
+      steps: [
+        {
+          position: 1,
+          title: "Assess impact",
+          description: "Confirm scope, affected services, and customer impact.",
+        },
+        {
+          position: 2,
+          title: "Inspect identity dependencies",
+          description: "Check identity provider latency, errors, and token validation failures.",
+        },
+      ],
+    },
+  })
+  expect(created.created_at).toBe(created.current_version.approved_at)
+  expect(created.id).toMatch(/^[0-9a-f-]{36}$/)
+  expect(created.current_version.id).toMatch(/^[0-9a-f-]{36}$/)
+  expect(created.current_version.steps.map((step) => step.position)).toEqual([1, 2])
+  expect(new Set(created.current_version.steps.map((step) => step.id))).toHaveLength(2)
+
+  const getResponse = await server.fetch(response.headers.get("location") ?? "")
+  expect(getResponse.status).toBe(200)
+  expect(await getResponse.json()).toEqual(created)
+})
+
+test("rejects malformed JSON when creating an action plan", async () => {
+  const response = await server.fetch("/api/v1/action-plans", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{",
+  })
+
+  expect(response.status).toBe(400)
+  expect(await response.json()).toMatchObject({ code: "invalid_json" })
+})
+
+test("rejects invalid action-plan fields", async () => {
+  const response = await server.fetch("/api/v1/action-plans", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      name: " ",
+      use_when: "Use when authentication errors rise.",
+      steps: [],
+      created_by: "client-controlled",
+    }),
+  })
+
+  expect(response.status).toBe(422)
+  expect(await response.json()).toMatchObject({
+    code: "validation_error",
+    errors: expect.arrayContaining([
+      expect.objectContaining({ field: "name", message: "Must not be empty." }),
+      expect.objectContaining({
+        field: "steps",
+        message: "Must contain at least one step.",
+      }),
+      expect.objectContaining({ field: "created_by" }),
+    ]),
+  })
+})
+
 test("lists action plans in stable pages without steps", async () => {
   const firstResponse = await server.fetch("/api/v1/action-plans?limit=2")
   const firstPage = (await firstResponse.json()) as {

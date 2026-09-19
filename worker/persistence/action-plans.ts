@@ -92,6 +92,47 @@ export async function findActionPlans(
   }))
 }
 
+export async function insertActionPlan(
+  database: D1Database,
+  plan: ActionPlan,
+): Promise<void> {
+  await database.batch([
+    database
+      .prepare("INSERT INTO action_plans (id, created_at, created_by) VALUES (?, ?, ?)")
+      .bind(plan.id, plan.createdAt, plan.createdBy),
+    database
+      .prepare(
+        `INSERT INTO action_plan_versions
+           (id, plan_id, version, name, use_when, approved_at, approved_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        plan.currentVersion.id,
+        plan.id,
+        plan.currentVersion.version,
+        plan.currentVersion.name,
+        plan.currentVersion.useWhen,
+        plan.currentVersion.approvedAt,
+        plan.currentVersion.approvedBy,
+      ),
+    ...plan.currentVersion.steps.map((step) =>
+      database
+        .prepare(
+          `INSERT INTO action_plan_steps
+             (id, plan_version_id, position, title, description)
+           VALUES (?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          step.id,
+          plan.currentVersion.id,
+          step.position,
+          step.title,
+          step.description,
+        ),
+    ),
+  ])
+}
+
 export async function findActionPlanById(
   database: D1Database,
   planId: Uuid,

@@ -1,6 +1,7 @@
 import * as v from "valibot"
 
 import {
+  createActionPlan,
   getActionPlan,
   listActionPlans,
   ListActionPlansCursorSchema,
@@ -13,8 +14,10 @@ import type {
 } from "../domain/action-plan"
 import { UuidSchema } from "../domain/scalars"
 import { decodeCursor, encodeCursor } from "./cursors"
+import { CreateActionPlanRequestSchema } from "./action-plan-schemas"
 import { notFound, validationProblem } from "./problems"
 import { parseQueryParam, schemaParser } from "./query-params"
+import { parseJsonBody } from "./validation"
 
 export interface PlanStepDto {
   readonly id: string
@@ -95,10 +98,7 @@ export async function handleListActionPlans(
     "limit",
     25,
     schemaParser(ListActionPlansLimitSchema),
-    {
-      code: "range",
-      message: "Must be a single integer between 1 and 100.",
-    },
+    "Must be a single integer between 1 and 100.",
   )
 
   if (!limit.ok) return validationProblem([limit.error])
@@ -108,10 +108,7 @@ export async function handleListActionPlans(
     "cursor",
     null,
     parseListActionPlansCursor,
-    {
-      code: "invalid",
-      message: "Must be a cursor returned by this endpoint.",
-    },
+    "Must be a cursor returned by this endpoint.",
   )
 
   if (!cursor.ok) return validationProblem([cursor.error])
@@ -141,6 +138,26 @@ export async function handleGetActionPlan(
   }
 
   return Response.json(toActionPlanDto(actionPlan))
+}
+
+export async function handleCreateActionPlan(
+  request: Request,
+  database: D1Database,
+): Promise<Response> {
+  const body = await parseJsonBody(request, CreateActionPlanRequestSchema)
+
+  if (!body.ok) return body.response
+
+  const actionPlan = await createActionPlan(database, {
+    name: body.value.name,
+    useWhen: body.value.use_when,
+    steps: body.value.steps,
+  })
+
+  return Response.json(toActionPlanDto(actionPlan), {
+    status: 201,
+    headers: { location: `/api/v1/action-plans/${actionPlan.id}` },
+  })
 }
 
 export function toPlanVersionDto(version: PlanVersion): PlanVersionDto {

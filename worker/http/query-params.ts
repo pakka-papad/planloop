@@ -11,17 +11,17 @@ export function parseQueryParam<T>(
   field: string,
   defaultValue: T,
   parse: (value: string) => T | undefined,
-  error: Omit<FieldError, "field">,
+  message: string,
 ): ParsedQueryParam<T> {
   const values = params.getAll(field)
 
   if (values.length === 0) return { ok: true, value: defaultValue }
-  if (values.length > 1) return { ok: false, error: { field, ...error } }
+  if (values.length > 1) return { ok: false, error: { field, message } }
 
   const value = parse(values[0])
 
   return value === undefined
-    ? { ok: false, error: { field, ...error } }
+    ? { ok: false, error: { field, message } }
     : { ok: true, value }
 }
 

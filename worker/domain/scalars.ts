@@ -22,3 +22,11 @@ export const UuidSchema = v.pipe(
 
 export type UtcTimestamp = v.InferOutput<typeof UtcTimestampSchema>
 export type Uuid = v.InferOutput<typeof UuidSchema>
+
+export function generateUuid(): Uuid {
+  return v.parse(UuidSchema, crypto.randomUUID())
+}
+
+export function currentUtcTimestamp(): UtcTimestamp {
+  return v.parse(UtcTimestampSchema, new Date().toISOString())
+}
