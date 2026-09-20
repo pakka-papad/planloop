@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "vitest"
 
 import { validateGeneratedProposalDraft } from "../../worker/application/review-proposal-generation"
+import { requestReviewProposalDraft } from "../../worker/ai/review-proposal-generator"
 import { UuidSchema } from "../../worker/domain/scalars"
 import {
   findReviewProposalGenerationContext,
@@ -281,4 +282,19 @@ test("rejects uncited and incomplete model changes", async () => {
     },
     context!,
   )).toThrow("missing changes: add:2")
+})
+
+test.each([
+  ["structured object", { summary: "A structured proposal draft." }],
+  ["JSON string", JSON.stringify({ summary: "A structured proposal draft." })],
+])("accepts a Workers AI %s response", async (_name, response) => {
+  const database = (await worker.getEnv()).DB
+  const context = await findReviewProposalGenerationContext(database, proposalId, 1)
+  const ai = {
+    run: async () => ({ response }),
+  } as unknown as Ai
+
+  expect(await requestReviewProposalDraft(ai, context!)).toEqual({
+    summary: "A structured proposal draft.",
+  })
 })

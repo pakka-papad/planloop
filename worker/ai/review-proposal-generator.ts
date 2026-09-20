@@ -158,8 +158,14 @@ export async function requestReviewProposalDraft(
     max_tokens: 6000,
     temperature: 0.1,
   })
-  const response = typeof output === "string" ? output : "response" in output ? output.response : null
+  const result: unknown = output
+  const response = typeof result === "string"
+    ? result
+    : result !== null && typeof result === "object" && "response" in result
+      ? result.response
+      : null
 
+  if (response !== null && typeof response === "object") return response
   if (typeof response !== "string") throw new Error("The model returned no proposal draft.")
 
   try {
