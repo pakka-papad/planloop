@@ -1,5 +1,5 @@
 import type { PlanVersion } from "./action-plans"
-import { getJson, postJson } from "./client"
+import { getJson, postJson, putJson } from "./client"
 
 export type IncidentStatus = "open" | "closed"
 
@@ -61,6 +61,14 @@ export interface IncidentPage {
   readonly next_cursor: string | null
 }
 
+export interface IncidentClosure {
+  readonly incident_id: string
+  readonly status: "closed"
+  readonly closed_at: string
+  readonly closed_by: string | null
+  readonly review_proposal_id: string | null
+}
+
 export interface CreateIncidentRequest {
   readonly title: string
   readonly symptoms: string
@@ -116,5 +124,11 @@ export function addActionRecord(
   return postJson<ActionRecord>(
     `/api/v1/incidents/${encodeURIComponent(incidentId)}/action-records`,
     input,
+  )
+}
+
+export function closeIncident(id: string): Promise<IncidentClosure> {
+  return putJson<IncidentClosure>(
+    `/api/v1/incidents/${encodeURIComponent(id)}/closure`,
   )
 }

@@ -48,6 +48,13 @@ export function postJson<T>(path: string, body: unknown): Promise<T> {
   })
 }
 
+export function putJson<T>(path: string): Promise<T> {
+  return requestJson(path, {
+    method: "PUT",
+    headers: { accept: "application/json" },
+  })
+}
+
 export function isAbortError(cause: unknown): boolean {
   return cause instanceof DOMException && cause.name === "AbortError"
 }

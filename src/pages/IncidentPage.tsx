@@ -3,10 +3,16 @@ import {
   CheckCircleIcon,
   ClipboardTextIcon,
 } from "@phosphor-icons/react"
+import { AlertDialog } from "@base-ui/react/alert-dialog"
 import { useEffect, useState } from "react"
 
-import { errorMessage, isAbortError } from "../api/client"
-import { getIncident, type ActionRecord, type Incident } from "../api/incidents"
+import { ApiError, errorMessage, isAbortError } from "../api/client"
+import {
+  closeIncident,
+  getIncident,
+  type ActionRecord,
+  type Incident,
+} from "../api/incidents"
 import { formatDateTime } from "../format"
 import { AppLink } from "../navigation"
 import { ActionRecordEditor } from "./ActionRecordEditor"
@@ -82,7 +88,11 @@ export function IncidentPage({ incidentId }: { readonly incidentId: string }) {
       {incident && !isLoading ? (
         <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] lg:items-start">
           <PinnedPlan incident={incident} />
-          <IncidentActivity incident={incident} onRecordCreated={addRecord} />
+          <IncidentActivity
+            incident={incident}
+            onIncidentChanged={setIncident}
+            onRecordCreated={addRecord}
+          />
         </div>
       ) : null}
     </main>
@@ -146,25 +156,124 @@ function PinnedPlan({ incident }: { readonly incident: Incident }) {
 
 function IncidentActivity({
   incident,
+  onIncidentChanged,
   onRecordCreated,
 }: {
   readonly incident: Incident
+  readonly onIncidentChanged: (incident: Incident) => void
   readonly onRecordCreated: (record: ActionRecord) => void
 }) {
+  const [isConfirmingClosure, setIsConfirmingClosure] = useState(false)
+  const [isClosing, setIsClosing] = useState(false)
+  const [closureError, setClosureError] = useState<string | null>(null)
+  const recordedStepIds = new Set(incident.action_records.flatMap((record) => (
+    record.plan_step_id === null ? [] : [record.plan_step_id]
+  )))
+  const unrecordedStepCount = incident.pinned_plan_version.steps.filter(
+    (step) => !recordedStepIds.has(step.id),
+  ).length
+
+  async function confirmClosure() {
+    setClosureError(null)
+    setIsClosing(true)
+
+    try {
+      const closure = await closeIncident(incident.id)
+      onIncidentChanged({
+        ...incident,
+        status: closure.status,
+        closed_at: closure.closed_at,
+        closed_by: closure.closed_by,
+        review_proposal_id: closure.review_proposal_id,
+      })
+      setIsConfirmingClosure(false)
+    } catch (cause) {
+      setClosureError(errorMessage(cause))
+
+      // Closure is committed before proposal generation starts. Refresh the
+      // incident so a workflow-start failure still leaves this page read-only.
+      if (cause instanceof ApiError && cause.code === "workflow_unavailable") {
+        try {
+          onIncidentChanged(await getIncident(incident.id))
+        } catch {
+          // Keep the actionable closure error when the refresh also fails.
+        }
+      }
+    } finally {
+      setIsClosing(false)
+    }
+  }
+
   return (
     <section className="rounded-xl border bg-card">
       <header className="border-b p-6 sm:p-8">
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <span className={`rounded-full px-2.5 py-1 font-semibold ${incident.status === "open" ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}>
-            {incident.status === "open" ? "Open" : "Closed"}
-          </span>
-          <span className="text-muted-foreground">Started {formatDateTime(incident.created_at)}</span>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className={`rounded-full px-2.5 py-1 font-semibold ${incident.status === "open" ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}>
+              {incident.status === "open" ? "Open" : "Closed"}
+            </span>
+            <span className="text-muted-foreground">Started {formatDateTime(incident.created_at)}</span>
+          </div>
+          {incident.status === "open" ? (
+            <AlertDialog.Root
+              onOpenChange={(open) => {
+                if (!isClosing) setIsConfirmingClosure(open)
+              }}
+              open={isConfirmingClosure}
+            >
+              <AlertDialog.Trigger
+                className="rounded-md bg-destructive px-3 py-2 text-sm font-semibold text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-45"
+                disabled={unrecordedStepCount > 0 || isClosing}
+                onClick={() => setClosureError(null)}
+              >
+                Close incident
+              </AlertDialog.Trigger>
+              <AlertDialog.Portal>
+                <AlertDialog.Backdrop className="fixed inset-0 z-50 bg-black/50 transition-opacity data-ending-style:opacity-0 data-starting-style:opacity-0" />
+                <AlertDialog.Viewport className="fixed inset-0 z-50 grid place-items-center overflow-y-auto p-4">
+                  <AlertDialog.Popup className="w-full max-w-md rounded-xl border bg-popover p-6 text-popover-foreground shadow-xl outline-none transition-[transform,opacity] data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0">
+                    <AlertDialog.Title className="text-lg font-semibold">Close this incident?</AlertDialog.Title>
+                    <AlertDialog.Description className="mt-2 text-sm leading-6 text-muted-foreground">
+                      This cannot be undone. Deviations from the plan may generate a review proposal.
+                    </AlertDialog.Description>
+                    {closureError ? (
+                      <p className="mt-4 text-sm text-destructive" role="alert">{closureError}</p>
+                    ) : null}
+                    <div className="mt-6 flex justify-end gap-2">
+                      <AlertDialog.Close
+                        className="rounded-md border bg-background px-3 py-2 text-sm font-semibold hover:bg-muted disabled:opacity-50"
+                        disabled={isClosing}
+                      >
+                        Cancel
+                      </AlertDialog.Close>
+                      <button
+                        className="rounded-md bg-destructive px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                        disabled={isClosing}
+                        onClick={() => void confirmClosure()}
+                        type="button"
+                      >
+                        {isClosing ? "Closing…" : "Confirm closure"}
+                      </button>
+                    </div>
+                  </AlertDialog.Popup>
+                </AlertDialog.Viewport>
+              </AlertDialog.Portal>
+            </AlertDialog.Root>
+          ) : null}
         </div>
         <h1 className="mt-4 text-2xl font-semibold tracking-tight sm:text-3xl">{incident.title}</h1>
         <div className="mt-5 rounded-lg bg-muted/45 p-4">
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Observed symptoms</p>
           <p className="mt-2 text-sm leading-6">{incident.symptoms}</p>
         </div>
+        {incident.status === "open" && unrecordedStepCount > 0 ? (
+          <p className="mt-3 text-xs text-muted-foreground">
+            Record an action for {unrecordedStepCount} remaining plan {unrecordedStepCount === 1 ? "step" : "steps"} before closing.
+          </p>
+        ) : null}
+        {closureError && !isConfirmingClosure ? (
+          <p className="mt-4 text-sm text-destructive" role="alert">{closureError}</p>
+        ) : null}
       </header>
 
       <div className="p-6 sm:p-8">
