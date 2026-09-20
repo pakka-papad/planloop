@@ -12,6 +12,7 @@ import { HomePage } from "./pages/HomePage"
 import { IncidentPage } from "./pages/IncidentPage"
 import { IncidentsPage } from "./pages/IncidentsPage"
 import { PlaceholderPage } from "./pages/PlaceholderPage"
+import { ReviewProposalsPage } from "./pages/ReviewProposalsPage"
 
 interface Route {
   readonly content: ReactNode
@@ -119,13 +120,21 @@ function resolveRoute(pathname: string, searchParams: URLSearchParams): Route {
     }
   }
 
-  if (pathname === "/review-proposals" || /^\/review-proposals\/[^/]+$/.test(pathname)) {
+  if (pathname === "/review-proposals") {
+    return {
+      content: <ReviewProposalsPage />,
+      section: "review-proposals",
+      title: "Review proposals",
+    }
+  }
+
+  if (/^\/review-proposals\/[^/]+$/.test(pathname)) {
     return {
       content: (
         <PlaceholderPage
-          description="The review queue and focused proposal review experience will be implemented after the action-plan workflow."
+          description="The focused proposal review experience will be implemented next."
           eyebrow="Review proposals"
-          title="Turn incident evidence into better plans."
+          title="Review proposed plan changes."
         />
       ),
       section: "review-proposals",

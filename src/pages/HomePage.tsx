@@ -22,7 +22,7 @@ const workspaceCards = [
     title: "Pending reviews",
     description: "Review improvements learned from completed incidents.",
     action: "View review queue",
-    available: false,
+    available: true,
   },
   {
     href: "/incidents",
