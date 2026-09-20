@@ -73,6 +73,11 @@ export interface ActionRecordRow {
   recorded_by: string | null
 }
 
+export type ContributingIncidentRow = Pick<
+  IncidentRow,
+  "id" | "title" | "symptoms" | "status" | "plan_version_id" | "closed_at"
+>
+
 interface IncidentSummaryRow extends IncidentRow {
   version_id: string
   plan_id: string
@@ -452,8 +457,7 @@ export async function findIncidents(
 }
 
 export function toContributingIncident(
-  row: IncidentRow,
-  pinnedPlanVersion: PlanVersion,
+  row: ContributingIncidentRow,
 ): ContributingIncident {
   if (toIncidentStatus(row.status) !== "closed" || row.closed_at === null) {
     throw new Error(`Contributing incident ${row.id} is not closed`)
@@ -463,7 +467,7 @@ export function toContributingIncident(
     id: v.parse(UuidSchema, row.id),
     title: row.title,
     symptoms: row.symptoms,
-    pinnedPlanVersion,
+    pinnedPlanVersionId: v.parse(UuidSchema, row.plan_version_id),
     closedAt: v.parse(UtcTimestampSchema, row.closed_at),
   }
 }

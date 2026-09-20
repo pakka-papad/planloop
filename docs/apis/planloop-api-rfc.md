@@ -286,7 +286,7 @@ A review proposal contains:
 | `id` | UUIDv4 | Server-generated. |
 | `plan_id` | UUIDv4 | Plan to update. |
 | `source_plan_version` | plan version | Complete approved version the draft proposes replacing; immutable. |
-| `contributing_incidents` | incident summary array | Every closed incident referencing this proposal. Each summary contains `id`, `title`, `symptoms`, complete `pinned_plan_version`, and `closed_at`. |
+| `contributing_incidents` | incident summary array | Every closed incident referencing this proposal. Each summary contains `id`, `title`, `symptoms`, `pinned_plan_version_id`, and `closed_at`. Use `GET /incidents/{incident_id}` when the complete incident or pinned plan version is needed. |
 | `evidence` | action record array | Distinct union of the records cited by the proposal's changes. |
 | `status` | enum | `updating`, `pending_review`, `failed`, `no_change`, `approved`, or `rejected`. |
 | `failure_reason` | string or null | Present only when `status` is `failed`; 1–500 characters. |

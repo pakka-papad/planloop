@@ -24,6 +24,12 @@ const PROPOSALS = {
   rejected: "0199d300-0006-4000-8000-000000000006",
 } as const
 
+const PAYMENT_STEP_ID = "0199d200-0002-4000-8000-000000000002"
+const INCIDENT_ID = "0199d400-0001-4000-8000-000000000001"
+const ADDITIONAL_ACTION_ID = "0199d500-0002-4000-8000-000000000002"
+const PROPOSED_NEW_STEP_ID = "0199d600-0002-4000-8000-000000000002"
+const ADD_STEP_CHANGE_ID = "0199d700-0001-4000-8000-000000000001"
+
 const server = createTestHarness({
   workers: [{ configPath: "./dist/planloop/wrangler.json" }],
 })
@@ -79,6 +85,19 @@ async function seedReviewProposals(database: D1Database): Promise<void> {
         1,
         "Measure customer impact",
         "Compare latency and completion rate with the regional baseline.",
+      ),
+    database
+      .prepare(
+        `INSERT INTO action_plan_steps
+           (id, plan_version_id, position, title, description)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        PAYMENT_STEP_ID,
+        VERSION_IDS[1],
+        1,
+        "Classify processor responses",
+        "Separate issuer declines from processor, routing, or integration failures.",
       ),
   )
 
@@ -162,6 +181,115 @@ async function seedReviewProposals(database: D1Database): Promise<void> {
     ),
   )
 
+  statements.push(
+    database
+      .prepare(
+        `INSERT INTO incidents
+           (id, title, symptoms, status, plan_version_id, review_proposal_id,
+            created_at, created_by, closed_at, closed_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        INCIDENT_ID,
+        "Elevated card declines in Europe",
+        "Valid Visa authorizations declined after a processor routing change.",
+        "closed",
+        VERSION_IDS[1],
+        PROPOSALS.pending,
+        "2026-02-02T10:00:00.000Z",
+        null,
+        "2026-02-02T10:20:00.000Z",
+        null,
+      ),
+    database
+      .prepare(
+        `INSERT INTO action_records
+           (id, incident_id, sequence, type, plan_step_id, details, reason,
+            recorded_at, recorded_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        "0199d500-0001-4000-8000-000000000001",
+        INCIDENT_ID,
+        1,
+        "step_completed",
+        PAYMENT_STEP_ID,
+        "Confirmed processor timeouts rather than issuer declines.",
+        null,
+        "2026-02-02T10:05:00.000Z",
+        null,
+      ),
+    database
+      .prepare(
+        `INSERT INTO action_records
+           (id, incident_id, sequence, type, plan_step_id, details, reason,
+            recorded_at, recorded_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        ADDITIONAL_ACTION_ID,
+        INCIDENT_ID,
+        2,
+        "additional_action",
+        null,
+        "Checked processor health before changing payment routing.",
+        "The plan did not include an explicit processor health check.",
+        "2026-02-02T10:10:00.000Z",
+        null,
+      ),
+    database
+      .prepare(
+        `INSERT INTO review_proposal_steps
+           (id, proposal_id, source_step_id, position, title, description)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        "0199d600-0001-4000-8000-000000000001",
+        PROPOSALS.pending,
+        PAYMENT_STEP_ID,
+        1,
+        "Classify processor responses",
+        "Separate issuer declines from processor, routing, or integration failures.",
+      ),
+    database
+      .prepare(
+        `INSERT INTO review_proposal_steps
+           (id, proposal_id, source_step_id, position, title, description)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        PROPOSED_NEW_STEP_ID,
+        PROPOSALS.pending,
+        null,
+        2,
+        "Check processor health",
+        "Review processor latency, timeout rate, and regional availability before changing routing.",
+      ),
+    database
+      .prepare(
+        `INSERT INTO review_proposal_changes
+           (id, proposal_id, position, type, source_step_id, proposed_step_id,
+            rationale)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        ADD_STEP_CHANGE_ID,
+        PROPOSALS.pending,
+        1,
+        "add_step",
+        null,
+        PROPOSED_NEW_STEP_ID,
+        "The response required checking processor health before rerouting traffic.",
+      ),
+    database
+      .prepare(
+        `INSERT INTO review_proposal_change_evidence
+           (change_id, action_record_id)
+         VALUES (?, ?)`,
+      )
+      .bind(ADD_STEP_CHANGE_ID, ADDITIONAL_ACTION_ID),
+  )
+
   await database.batch(statements)
 }
 
@@ -228,6 +356,106 @@ test("lists the review queue oldest first and omits proposal details", async () 
   })
   expect(body.items[0]).not.toHaveProperty("contributing_incidents")
   expect(body.items[0]).not.toHaveProperty("evidence")
+})
+
+test("returns one complete review proposal with a strong revision ETag", async () => {
+  const response = await server.fetch(`/api/v1/review-proposals/${PROPOSALS.pending}`)
+  const body = await response.json()
+
+  expect(response.status).toBe(200)
+  expect(response.headers.get("etag")).toBe(`"${PROPOSALS.pending}:2"`)
+  expect(body).toEqual({
+    id: PROPOSALS.pending,
+    plan_id: PLAN_IDS[1],
+    source_plan_version: {
+      id: VERSION_IDS[1],
+      plan_id: PLAN_IDS[1],
+      version: 1,
+      name: "Payment authorization decline spike",
+      use_when: "Use when valid card authorizations decline above baseline.",
+      steps: [
+        {
+          id: PAYMENT_STEP_ID,
+          position: 1,
+          title: "Classify processor responses",
+          description:
+            "Separate issuer declines from processor, routing, or integration failures.",
+        },
+      ],
+      approved_at: "2026-01-02T09:00:00.000Z",
+      approved_by: null,
+    },
+    contributing_incidents: [
+      {
+        id: INCIDENT_ID,
+        title: "Elevated card declines in Europe",
+        symptoms: "Valid Visa authorizations declined after a processor routing change.",
+        pinned_plan_version_id: VERSION_IDS[1],
+        closed_at: "2026-02-02T10:20:00.000Z",
+      },
+    ],
+    evidence: [
+      {
+        id: ADDITIONAL_ACTION_ID,
+        incident_id: INCIDENT_ID,
+        sequence: 2,
+        type: "additional_action",
+        plan_step_id: null,
+        details: "Checked processor health before changing payment routing.",
+        reason: "The plan did not include an explicit processor health check.",
+        recorded_at: "2026-02-02T10:10:00.000Z",
+        recorded_by: null,
+      },
+    ],
+    status: "pending_review",
+    failure_reason: null,
+    revision: 2,
+    draft: {
+      summary: "Verify processor health before changing payment routing.",
+      proposed_plan: {
+        name: "Payment authorization decline spike",
+        use_when: "Use when valid card authorizations decline above baseline.",
+        steps: [
+          {
+            source_step_id: PAYMENT_STEP_ID,
+            title: "Classify processor responses",
+            description:
+              "Separate issuer declines from processor, routing, or integration failures.",
+          },
+          {
+            source_step_id: null,
+            title: "Check processor health",
+            description:
+              "Review processor latency, timeout rate, and regional availability before changing routing.",
+          },
+        ],
+      },
+      changes: [
+        {
+          type: "add_step",
+          proposed_step_position: 2,
+          rationale:
+            "The response required checking processor health before rerouting traffic.",
+          action_record_ids: [ADDITIONAL_ACTION_ID],
+        },
+      ],
+    },
+    created_at: "2026-02-03T09:00:00.000Z",
+    updated_at: "2026-02-03T09:00:00.000Z",
+    decided_at: null,
+    decided_by: null,
+    decision_comment: null,
+    created_plan_version: null,
+  })
+})
+
+test.each([
+  "not-a-uuid",
+  "0199d300-9999-4000-8000-000000000999",
+])("returns 404 for an unknown review proposal: %s", async (proposalId) => {
+  const response = await server.fetch(`/api/v1/review-proposals/${proposalId}`)
+
+  expect(response.status).toBe(404)
 })
 
 test("filters by one status", async () => {

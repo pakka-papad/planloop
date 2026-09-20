@@ -1,3 +1,5 @@
+import * as v from "valibot"
+
 import type { PlanVersion } from "../domain/action-plan"
 import type { ActionRecord } from "../domain/incident"
 import type {
@@ -14,7 +16,13 @@ import {
   UuidSchema,
   type Uuid,
 } from "../domain/scalars"
-import * as v from "valibot"
+import { findActionPlanVersionById } from "./action-plans"
+import {
+  toActionRecord,
+  toContributingIncident,
+  type ActionRecordRow,
+  type ContributingIncidentRow,
+} from "./incidents"
 
 export interface ReviewProposalRow {
   id: string
@@ -238,6 +246,118 @@ export async function findReviewProposals(
   return results.map(toReviewProposalSummary)
 }
 
+export async function findReviewProposalById(
+  database: D1Database,
+  proposalId: Uuid,
+): Promise<ReviewProposal | null> {
+  const row = await database
+    .prepare(
+      `SELECT id, plan_id, source_plan_version_id, status, failure_reason,
+              revision, summary, proposed_name, proposed_use_when, created_at,
+              updated_at, decided_at, decided_by, decision_comment,
+              created_plan_version_id
+       FROM review_proposals
+       WHERE id = ?`,
+    )
+    .bind(proposalId)
+    .first<ReviewProposalRow>()
+
+  if (row === null) return null
+
+  const sourceVersionId = v.parse(UuidSchema, row.source_plan_version_id)
+  const createdVersionId =
+    row.created_plan_version_id === null
+      ? null
+      : v.parse(UuidSchema, row.created_plan_version_id)
+
+  const [
+    sourcePlanVersion,
+    createdPlanVersion,
+    incidentResult,
+    actionRecordResult,
+    proposedStepResult,
+    changeResult,
+    evidenceResult,
+  ] = await Promise.all([
+    findActionPlanVersionById(database, sourceVersionId),
+    createdVersionId === null
+      ? Promise.resolve(null)
+      : findActionPlanVersionById(database, createdVersionId),
+    database
+      .prepare(
+        `SELECT id, title, symptoms, status, plan_version_id, closed_at
+         FROM incidents
+         WHERE review_proposal_id = ? AND status = 'closed'
+         ORDER BY closed_at, id`,
+      )
+      .bind(proposalId)
+      .all<ContributingIncidentRow>(),
+    database
+      .prepare(
+        `SELECT DISTINCT record.id, record.incident_id, record.sequence,
+                record.type, record.plan_step_id, record.details, record.reason,
+                record.recorded_at, record.recorded_by
+         FROM action_records record
+         JOIN review_proposal_change_evidence evidence
+           ON evidence.action_record_id = record.id
+         JOIN review_proposal_changes change ON change.id = evidence.change_id
+         WHERE change.proposal_id = ?
+         ORDER BY record.incident_id, record.sequence, record.id`,
+      )
+      .bind(proposalId)
+      .all<ActionRecordRow>(),
+    database
+      .prepare(
+        `SELECT id, proposal_id, source_step_id, position, title, description
+         FROM review_proposal_steps
+         WHERE proposal_id = ?
+         ORDER BY position, id`,
+      )
+      .bind(proposalId)
+      .all<ReviewProposalStepRow>(),
+    database
+      .prepare(
+        `SELECT id, proposal_id, position, type, source_step_id,
+                proposed_step_id, rationale
+         FROM review_proposal_changes
+         WHERE proposal_id = ?
+         ORDER BY position, id`,
+      )
+      .bind(proposalId)
+      .all<ReviewProposalChangeRow>(),
+    database
+      .prepare(
+        `SELECT evidence.change_id, evidence.action_record_id
+         FROM review_proposal_change_evidence evidence
+         JOIN review_proposal_changes change ON change.id = evidence.change_id
+         WHERE change.proposal_id = ?
+         ORDER BY change.position, evidence.action_record_id`,
+      )
+      .bind(proposalId)
+      .all<ReviewProposalChangeEvidenceRow>(),
+  ])
+
+  if (sourcePlanVersion === null) {
+    throw new Error(`Proposal ${row.id} references a missing source plan version`)
+  }
+  if (createdVersionId !== null && createdPlanVersion === null) {
+    throw new Error(`Proposal ${row.id} references a missing created plan version`)
+  }
+
+  const contributingIncidents = incidentResult.results.map(toContributingIncident)
+
+  return toReviewProposal(
+    row,
+    sourcePlanVersion,
+    contributingIncidents,
+    actionRecordResult.results.map(toActionRecord),
+    proposedStepResult.results,
+    changeResult.results,
+    evidenceResult.results,
+    createdPlanVersion,
+  )
+}
+
 function requiredId(value: string | null, field: string): string {
   if (value === null) throw new Error(`Missing ${field}`)
   return value
@@ -247,7 +367,7 @@ function toProposalChange(
   row: ReviewProposalChangeRow,
   sourcePlanVersion: PlanVersion,
   proposedStepsById: ReadonlyMap<string, ReviewProposalStepRow>,
-  actionRecordIds: readonly string[],
+  actionRecordIds: readonly Uuid[],
 ): ProposalChange {
   const evidence = {
     rationale: row.rationale,
@@ -267,7 +387,10 @@ function toProposalChange(
       }
     }
     case "update_step": {
-      const sourceStepId = requiredId(row.source_step_id, `source step for change ${row.id}`)
+      const sourceStepId = v.parse(
+        UuidSchema,
+        requiredId(row.source_step_id, `source step for change ${row.id}`),
+      )
       const sourceStep = sourcePlanVersion.steps.find((step) => step.id === sourceStepId)
       const proposedStep = proposedStepsById.get(
         requiredId(row.proposed_step_id, `proposed step for change ${row.id}`),
@@ -295,7 +418,10 @@ function toProposalChange(
       return {
         ...evidence,
         type: row.type,
-        sourceStepId: requiredId(row.source_step_id, `source step for change ${row.id}`),
+        sourceStepId: v.parse(
+          UuidSchema,
+          requiredId(row.source_step_id, `source step for change ${row.id}`),
+        ),
         proposedStepPosition: proposedStep.position,
       }
     }
@@ -303,7 +429,10 @@ function toProposalChange(
       return {
         ...evidence,
         type: row.type,
-        sourceStepId: requiredId(row.source_step_id, `source step for change ${row.id}`),
+        sourceStepId: v.parse(
+          UuidSchema,
+          requiredId(row.source_step_id, `source step for change ${row.id}`),
+        ),
       }
     case "update_plan_details": {
       throw new Error("Plan detail changes must be assembled with the proposal row")
@@ -337,11 +466,11 @@ function toProposalDraft(
     (left, right) => left.position - right.position,
   )
   const proposedStepsById = new Map(orderedStepRows.map((step) => [step.id, step]))
-  const actionRecordIdsByChange = new Map<string, string[]>()
+  const actionRecordIdsByChange = new Map<string, Uuid[]>()
 
   for (const evidence of evidenceRows) {
     const ids = actionRecordIdsByChange.get(evidence.change_id) ?? []
-    ids.push(evidence.action_record_id)
+    ids.push(v.parse(UuidSchema, evidence.action_record_id))
     actionRecordIdsByChange.set(evidence.change_id, ids)
   }
 
@@ -369,7 +498,8 @@ function toProposalDraft(
     })
 
   const steps: ProposedPlanStep[] = orderedStepRows.map((step) => ({
-    sourceStepId: step.source_step_id,
+    sourceStepId:
+      step.source_step_id === null ? null : v.parse(UuidSchema, step.source_step_id),
     title: step.title,
     description: step.description,
   }))
@@ -398,8 +528,8 @@ export function toReviewProposal(
   const citedActionRecordIds = new Set(evidenceRows.map((evidence) => evidence.action_record_id))
 
   return {
-    id: row.id,
-    planId: row.plan_id,
+    id: v.parse(UuidSchema, row.id),
+    planId: v.parse(UuidSchema, row.plan_id),
     sourcePlanVersion,
     contributingIncidents,
     evidence: actionRecords.filter((record) => citedActionRecordIds.has(record.id)),
@@ -407,9 +537,10 @@ export function toReviewProposal(
     failureReason: row.failure_reason,
     revision: row.revision,
     draft: toProposalDraft(row, sourcePlanVersion, proposedStepRows, changeRows, evidenceRows),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    decidedAt: row.decided_at,
+    createdAt: v.parse(UtcTimestampSchema, row.created_at),
+    updatedAt: v.parse(UtcTimestampSchema, row.updated_at),
+    decidedAt:
+      row.decided_at === null ? null : v.parse(UtcTimestampSchema, row.decided_at),
     decidedBy: row.decided_by,
     decisionComment: row.decision_comment,
     createdPlanVersion,

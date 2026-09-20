@@ -8,12 +8,14 @@ import type {
   ReviewProposalSummary,
 } from "../domain/review-proposal"
 import {
+  getReviewProposal,
   listReviewProposals,
   ListReviewProposalsCursorSchema,
   type ListReviewProposalsCursor,
 } from "../application/review-proposals"
+import { UuidSchema } from "../domain/scalars"
 import { cursorParser, encodeCursor } from "./cursors"
-import { validationProblem } from "./problems"
+import { notFound, validationProblem } from "./problems"
 import { PageLimitSchema, parseQueryParam, schemaParser } from "./query-params"
 import { toPlanVersionDto, type PlanVersionDto } from "./action-plans"
 import { toActionRecordDto, type ActionRecordDto } from "./incidents"
@@ -77,7 +79,7 @@ export interface ContributingIncidentDto {
   readonly id: string
   readonly title: string
   readonly symptoms: string
-  readonly pinned_plan_version: PlanVersionDto
+  readonly pinned_plan_version_id: string
   readonly closed_at: string
 }
 
@@ -231,6 +233,27 @@ export async function handleListReviewProposals(
   })
 }
 
+export async function handleGetReviewProposal(
+  database: D1Database,
+  proposalId: string,
+): Promise<Response> {
+  const parsedProposalId = v.safeParse(UuidSchema, proposalId)
+
+  if (!parsedProposalId.success) {
+    return notFound("The requested review proposal does not exist.")
+  }
+
+  const proposal = await getReviewProposal(database, parsedProposalId.output)
+
+  if (proposal === null) {
+    return notFound("The requested review proposal does not exist.")
+  }
+
+  return Response.json(toReviewProposalDto(proposal), {
+    headers: { etag: `"${proposal.id}:${proposal.revision}"` },
+  })
+}
+
 function toProposalChangeDto(change: ProposalChange): ProposalChangeDto {
   const evidence = {
     rationale: change.rationale,
@@ -276,7 +299,7 @@ function toProposalChangeDto(change: ProposalChange): ProposalChangeDto {
 function fromProposalChangeDto(change: ProposalChangeDto): ProposalChange {
   const evidence = {
     rationale: change.rationale,
-    actionRecordIds: change.action_record_ids,
+    actionRecordIds: change.action_record_ids.map((id) => v.parse(UuidSchema, id)),
   }
 
   switch (change.type) {
@@ -290,21 +313,21 @@ function fromProposalChangeDto(change: ProposalChangeDto): ProposalChange {
       return {
         ...evidence,
         type: change.type,
-        sourceStepId: change.source_step_id,
+        sourceStepId: v.parse(UuidSchema, change.source_step_id),
         fields: change.fields,
       }
     case "move_step":
       return {
         ...evidence,
         type: change.type,
-        sourceStepId: change.source_step_id,
+        sourceStepId: v.parse(UuidSchema, change.source_step_id),
         proposedStepPosition: change.proposed_step_position,
       }
     case "remove_step":
       return {
         ...evidence,
         type: change.type,
-        sourceStepId: change.source_step_id,
+        sourceStepId: v.parse(UuidSchema, change.source_step_id),
       }
     case "update_plan_details":
       return {
@@ -338,7 +361,8 @@ export function fromProposalDraftDto(draft: ProposalDraftDto): ProposalDraft {
       name: draft.proposed_plan.name,
       useWhen: draft.proposed_plan.use_when,
       steps: draft.proposed_plan.steps.map((step) => ({
-        sourceStepId: step.source_step_id,
+        sourceStepId:
+          step.source_step_id === null ? null : v.parse(UuidSchema, step.source_step_id),
         title: step.title,
         description: step.description,
       })),
@@ -356,7 +380,7 @@ export function toReviewProposalDto(proposal: ReviewProposal): ReviewProposalDto
       id: incident.id,
       title: incident.title,
       symptoms: incident.symptoms,
-      pinned_plan_version: toPlanVersionDto(incident.pinnedPlanVersion),
+      pinned_plan_version_id: incident.pinnedPlanVersionId,
       closed_at: incident.closedAt,
     })),
     evidence: proposal.evidence.map(toActionRecordDto),

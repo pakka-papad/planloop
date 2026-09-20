@@ -1,11 +1,15 @@
 import * as v from "valibot"
 
 import type {
+  ReviewProposal,
   ReviewProposalStatus,
   ReviewProposalSummary,
 } from "../domain/review-proposal"
-import { UtcTimestampSchema, UuidSchema } from "../domain/scalars"
-import { findReviewProposals } from "../persistence/review-proposals"
+import { UtcTimestampSchema, UuidSchema, type Uuid } from "../domain/scalars"
+import {
+  findReviewProposalById,
+  findReviewProposals,
+} from "../persistence/review-proposals"
 
 export const ListReviewProposalsCursorSchema = v.strictObject({
   createdAt: UtcTimestampSchema,
@@ -38,4 +42,11 @@ export async function listReviewProposals(
         ? { createdAt: lastItem.createdAt, id: lastItem.id }
         : null,
   }
+}
+
+export function getReviewProposal(
+  database: D1Database,
+  proposalId: Uuid,
+): Promise<ReviewProposal | null> {
+  return findReviewProposalById(database, proposalId)
 }
