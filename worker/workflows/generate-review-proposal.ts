@@ -62,6 +62,7 @@ export class GenerateReviewProposalWorkflow extends WorkflowEntrypoint<
           this.env.DB,
           input.proposalId,
           input.revision,
+          "Proposal generation did not complete. Try again.",
         ),
       )
 

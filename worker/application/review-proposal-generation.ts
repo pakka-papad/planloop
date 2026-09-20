@@ -6,6 +6,7 @@ import type {
   ReviewProposalGenerationContext,
 } from "../domain/review-proposal"
 import { UuidSchema, type Uuid } from "../domain/scalars"
+import { markProposalGenerationFailed } from "../persistence/review-proposal-generation"
 
 export interface GenerateReviewProposalInput {
   readonly proposalId: Uuid
@@ -15,6 +16,22 @@ export interface GenerateReviewProposalInput {
 export type StartReviewProposalGeneration = (
   input: GenerateReviewProposalInput,
 ) => Promise<boolean>
+
+export async function dispatchReviewProposalGeneration(
+  database: D1Database,
+  startReviewProposalGeneration: StartReviewProposalGeneration,
+  input: GenerateReviewProposalInput,
+): Promise<boolean> {
+  if (await startReviewProposalGeneration(input)) return true
+
+  await markProposalGenerationFailed(
+    database,
+    input.proposalId,
+    input.revision,
+    "Proposal generation could not be started. Try again.",
+  )
+  return false
+}
 
 function requiredText(maxCodePoints: number) {
   return v.pipe(

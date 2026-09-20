@@ -23,7 +23,10 @@ import {
   insertIncident,
 } from "../persistence/incidents"
 import { findProposalWorkflowTarget } from "../persistence/review-proposals"
-import type { StartReviewProposalGeneration } from "./review-proposal-generation"
+import {
+  dispatchReviewProposalGeneration,
+  type StartReviewProposalGeneration,
+} from "./review-proposal-generation"
 
 export const ListIncidentsCursorSchema = v.strictObject({
   createdAt: UtcTimestampSchema,
@@ -313,10 +316,11 @@ export async function closeIncident(
     const shouldStartWorkflow = target.status === "updating"
 
     if (shouldStartWorkflow) {
-      const workflowStarted = await startReviewProposalGeneration({
-        proposalId,
-        revision: target.revision,
-      })
+      const workflowStarted = await dispatchReviewProposalGeneration(
+        database,
+        startReviewProposalGeneration,
+        { proposalId, revision: target.revision },
+      )
 
       if (!workflowStarted) return { status: "workflow_unavailable" }
     }

@@ -18,7 +18,10 @@ import {
   findProposalWorkflowTarget,
   findReviewProposals,
 } from "../persistence/review-proposals"
-import type { StartReviewProposalGeneration } from "./review-proposal-generation"
+import {
+  dispatchReviewProposalGeneration,
+  type StartReviewProposalGeneration,
+} from "./review-proposal-generation"
 
 export const ListReviewProposalsCursorSchema = v.strictObject({
   createdAt: UtcTimestampSchema,
@@ -93,10 +96,11 @@ export async function startProposalGenerationAttempt(
     throw new Error(`Failed to start generation attempt for proposal ${proposalId}`)
   }
 
-  const workflowStarted = await startReviewProposalGeneration({
-    proposalId,
-    revision,
-  })
+  const workflowStarted = await dispatchReviewProposalGeneration(
+    database,
+    startReviewProposalGeneration,
+    { proposalId, revision },
+  )
 
   if (!workflowStarted) return { status: "workflow_unavailable" }
 

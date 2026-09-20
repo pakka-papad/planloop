@@ -1,6 +1,9 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "vitest"
 
-import { validateGeneratedProposalDraft } from "../../worker/application/review-proposal-generation"
+import {
+  dispatchReviewProposalGeneration,
+  validateGeneratedProposalDraft,
+} from "../../worker/application/review-proposal-generation"
 import { requestReviewProposalDraft } from "../../worker/ai/review-proposal-generator"
 import { UuidSchema } from "../../worker/domain/scalars"
 import {
@@ -266,6 +269,32 @@ test("does not overwrite a newer proposal revision", async () => {
   ).toEqual({ status: "updating", revision: 2, summary: null })
 })
 
+test("marks the proposal failed when workflow dispatch cannot be confirmed", async () => {
+  const database = (await worker.getEnv()).DB
+
+  expect(
+    await dispatchReviewProposalGeneration(
+      database,
+      async () => false,
+      { proposalId, revision: 1 },
+    ),
+  ).toBe(false)
+  expect(
+    await database
+      .prepare(
+        `SELECT status, failure_reason, revision
+         FROM review_proposals
+         WHERE id = ?`,
+      )
+      .bind(PROPOSAL_ID)
+      .first(),
+  ).toEqual({
+    status: "failed",
+    failure_reason: "Proposal generation could not be started. Try again.",
+    revision: 2,
+  })
+})
+
 test("records failure without deleting the last valid draft", async () => {
   const database = (await worker.getEnv()).DB
   const context = await findReviewProposalGenerationContext(database, proposalId, 1)
@@ -293,7 +322,14 @@ test("records failure without deleting the last valid draft", async () => {
     .bind(PROPOSAL_ID)
     .run()
 
-  expect(await markProposalGenerationFailed(database, proposalId, 2)).toBe(true)
+  expect(
+    await markProposalGenerationFailed(
+      database,
+      proposalId,
+      2,
+      "Proposal generation did not complete. Try again.",
+    ),
+  ).toBe(true)
 
   const failed = await findReviewProposalById(database, proposalId)
 

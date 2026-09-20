@@ -245,9 +245,9 @@ export async function markProposalGenerationFailed(
   database: D1Database,
   proposalId: Uuid,
   expectedRevision: number,
+  failureReason: string,
 ): Promise<boolean> {
   const failedAt = currentUtcTimestamp()
-  const failureReason = "Proposal generation did not complete. Try again."
   const results = await database.batch([
     database
       .prepare(
