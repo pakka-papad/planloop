@@ -3,12 +3,14 @@ import * as v from "valibot"
 import {
   addActionRecord,
   type AddActionRecordInput,
+  closeIncident,
   createIncident,
   getIncident,
   listIncidents,
   ListIncidentsCursorSchema,
   type ListIncidentsCursor,
 } from "../application/incidents"
+import type { StartReviewProposalGeneration } from "../application/review-proposal-generation"
 import type {
   ActionRecord,
   Incident,
@@ -36,6 +38,7 @@ export type ActionRecordTypeDto =
 export interface ActionRecordDto {
   readonly id: string
   readonly incident_id: string
+  readonly sequence: number
   readonly type: ActionRecordTypeDto
   readonly plan_step_id: string | null
   readonly details: string | null
@@ -69,6 +72,14 @@ export interface IncidentSummaryDto {
   readonly created_by: string | null
   readonly closed_at: string | null
   readonly closed_by: string | null
+}
+
+export interface IncidentClosureDto {
+  readonly incident_id: string
+  readonly status: "closed"
+  readonly closed_at: string
+  readonly closed_by: string | null
+  readonly review_proposal_id: string | null
 }
 
 export async function handleCreateIncident(
@@ -209,6 +220,63 @@ export async function handleGetIncident(
   return Response.json(toIncidentDto(incident))
 }
 
+export async function handleCloseIncident(
+  database: D1Database,
+  startReviewProposalGeneration: StartReviewProposalGeneration,
+  incidentId: string,
+): Promise<Response> {
+  const parsedIncidentId = v.safeParse(UuidSchema, incidentId)
+
+  if (!parsedIncidentId.success) {
+    return notFound("The requested incident does not exist.")
+  }
+
+  const result = await closeIncident(
+    database,
+    startReviewProposalGeneration,
+    parsedIncidentId.output,
+  )
+
+  switch (result.status) {
+    case "incident_not_found":
+      return notFound("The requested incident does not exist.")
+    case "incident_has_unrecorded_steps":
+      return problem({
+        type: "urn:planloop:problem:incident-has-unrecorded-steps",
+        title: "Incident has unrecorded steps",
+        status: 409,
+        detail: "Every pinned action plan step must have an action record.",
+        code: "incident_has_unrecorded_steps",
+        unrecorded_plan_step_ids: result.unrecordedPlanStepIds,
+      })
+    case "workflow_unavailable":
+      return problem({
+        type: "urn:planloop:problem:workflow-unavailable",
+        title: "Workflow unavailable",
+        status: 503,
+        detail: "The incident was closed, but proposal generation could not start.",
+        code: "workflow_unavailable",
+      })
+    case "closed": {
+      const { incident } = result
+
+      if (incident.closedAt === null) {
+        throw new Error(`Closed incident ${incident.id} has no closure timestamp`)
+      }
+
+      const response: IncidentClosureDto = {
+        incident_id: incident.id,
+        status: "closed",
+        closed_at: incident.closedAt,
+        closed_by: incident.closedBy,
+        review_proposal_id: incident.reviewProposalId,
+      }
+
+      return Response.json(response)
+    }
+  }
+}
+
 export async function handleListIncidents(
   request: Request,
   database: D1Database,
@@ -261,6 +329,7 @@ export function toActionRecordDto(record: ActionRecord): ActionRecordDto {
   return {
     id: record.id,
     incident_id: record.incidentId,
+    sequence: record.sequence,
     type: record.type,
     plan_step_id: record.planStepId,
     details: record.details,

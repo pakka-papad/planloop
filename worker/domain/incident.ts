@@ -12,6 +12,7 @@ export type ActionRecordType =
 export interface ActionRecord {
   readonly id: Uuid
   readonly incidentId: Uuid
+  readonly sequence: number
   readonly type: ActionRecordType
   readonly planStepId: Uuid | null
   readonly details: string | null

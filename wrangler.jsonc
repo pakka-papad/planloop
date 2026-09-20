@@ -16,9 +16,9 @@
   ],
   "workflows": [
     {
-      "name": "close-incident",
-      "binding": "CLOSE_INCIDENT_WORKFLOW",
-      "class_name": "CloseIncidentWorkflow"
+      "name": "generate-review-proposal",
+      "binding": "GENERATE_REVIEW_PROPOSAL_WORKFLOW",
+      "class_name": "GenerateReviewProposalWorkflow"
     }
   ],
   "observability": {

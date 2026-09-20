@@ -8,6 +8,7 @@ import type {
   ReviewProposal,
   ReviewProposalStatus,
 } from "../domain/review-proposal"
+import type { Uuid } from "../domain/scalars"
 
 export interface ReviewProposalRow {
   id: string
@@ -63,6 +64,25 @@ function toReviewProposalStatus(value: string): ReviewProposalStatus {
     default:
       throw new Error(`Invalid review proposal status: ${value}`)
   }
+}
+
+export interface ProposalWorkflowTarget {
+  readonly status: ReviewProposalStatus
+  readonly revision: number
+}
+
+export async function findProposalWorkflowTarget(
+  database: D1Database,
+  proposalId: Uuid,
+): Promise<ProposalWorkflowTarget | null> {
+  const row = await database
+    .prepare("SELECT status, revision FROM review_proposals WHERE id = ?")
+    .bind(proposalId)
+    .first<{ status: string; revision: number }>()
+
+  return row === null
+    ? null
+    : { status: toReviewProposalStatus(row.status), revision: row.revision }
 }
 
 function requiredId(value: string | null, field: string): string {

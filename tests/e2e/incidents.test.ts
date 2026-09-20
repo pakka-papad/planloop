@@ -227,11 +227,13 @@ test("creates an open incident pinned to the selected current plan version", asy
   await env.DB.batch([
     env.DB.prepare(
       `INSERT INTO action_records
-         (id, incident_id, type, plan_step_id, details, reason, recorded_at, recorded_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, incident_id, sequence, type, plan_step_id, details, reason,
+          recorded_at, recorded_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       "0199d000-0001-4000-8000-000000000002",
       incident.id,
+      2,
       "step_modified",
       "0199c200-0002-4000-8000-000000000002",
       "Checked regional token validation errors before identity provider latency.",
@@ -241,11 +243,13 @@ test("creates an open incident pinned to the selected current plan version", asy
     ),
     env.DB.prepare(
       `INSERT INTO action_records
-         (id, incident_id, type, plan_step_id, details, reason, recorded_at, recorded_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, incident_id, sequence, type, plan_step_id, details, reason,
+          recorded_at, recorded_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       "0199d000-0001-4000-8000-000000000001",
       incident.id,
+      1,
       "step_completed",
       "0199c200-0002-4000-8000-000000000001",
       "Confirmed elevated failures in checkout and account services.",
@@ -264,6 +268,7 @@ test("creates an open incident pinned to the selected current plan version", asy
       {
         id: "0199d000-0001-4000-8000-000000000001",
         incident_id: incident.id,
+        sequence: 1,
         type: "step_completed",
         plan_step_id: "0199c200-0002-4000-8000-000000000001",
         details: "Confirmed elevated failures in checkout and account services.",
@@ -274,6 +279,7 @@ test("creates an open incident pinned to the selected current plan version", asy
       {
         id: "0199d000-0001-4000-8000-000000000002",
         incident_id: incident.id,
+        sequence: 2,
         type: "step_modified",
         plan_step_id: "0199c200-0002-4000-8000-000000000002",
         details: "Checked regional token validation errors before identity provider latency.",
@@ -360,6 +366,7 @@ test("adds step and additional-action records to an open incident", async () => 
   expect(stepResponse.status).toBe(201)
   expect(stepRecord).toMatchObject({
     incident_id: FIRST_INCIDENT_ID,
+    sequence: 1,
     type: "step_completed",
     plan_step_id: "0199c200-0001-4000-8000-000000000001",
     details: "Confirmed the affected account settings requests.",
@@ -387,6 +394,7 @@ test("adds step and additional-action records to an open incident", async () => 
   expect(additionalResponse.status).toBe(201)
   expect(await additionalResponse.json()).toMatchObject({
     incident_id: FIRST_INCIDENT_ID,
+    sequence: 2,
     type: "additional_action",
     plan_step_id: null,
     details: "Disabled the faulty token-validation cache before restoring traffic.",
@@ -405,26 +413,34 @@ test("allows multiple action records for the same pinned step", async () => {
   await seedIncidents(env.DB)
   const path = `/api/v1/incidents/${FIRST_INCIDENT_ID}/action-records`
 
-  const firstResponse = await server.fetch(path, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      type: "step_completed",
-      plan_step_id: "0199c200-0001-4000-8000-000000000001",
+  const [firstResponse, secondResponse] = await Promise.all([
+    server.fetch(path, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        type: "step_completed",
+        plan_step_id: "0199c200-0001-4000-8000-000000000001",
+      }),
     }),
-  })
-  const secondResponse = await server.fetch(path, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      type: "step_skipped",
-      plan_step_id: "0199c200-0001-4000-8000-000000000001",
-      reason: "The step was no longer safe to perform.",
+    server.fetch(path, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        type: "step_skipped",
+        plan_step_id: "0199c200-0001-4000-8000-000000000001",
+        reason: "The step was no longer safe to perform.",
+      }),
     }),
-  })
+  ])
 
   expect(firstResponse.status).toBe(201)
   expect(secondResponse.status).toBe(201)
+  const records = await Promise.all([firstResponse.json(), secondResponse.json()])
+  expect(
+    records
+      .map((record) => (record as { sequence: number }).sequence)
+      .sort((left, right) => left - right),
+  ).toEqual([1, 2])
 
   const getResponse = await server.fetch(`/api/v1/incidents/${FIRST_INCIDENT_ID}`)
   const incident = (await getResponse.json()) as { action_records: unknown[] }
@@ -589,4 +605,184 @@ test.each([
     code: "validation_error",
     errors: [{ field }],
   })
+})
+
+test("rejects closure while pinned plan steps are unrecorded", async () => {
+  const env = await worker.getEnv()
+  await seedIncidents(env.DB)
+
+  const response = await server.fetch(
+    `/api/v1/incidents/${THIRD_INCIDENT_ID}/closure`,
+    { method: "PUT" },
+  )
+
+  expect(response.status).toBe(409)
+  expect(await response.json()).toMatchObject({
+    code: "incident_has_unrecorded_steps",
+    unrecorded_plan_step_ids: [
+      "0199c200-0002-4000-8000-000000000001",
+      "0199c200-0002-4000-8000-000000000002",
+    ],
+  })
+})
+
+test("closes an incident without a proposal when the plan was followed", async () => {
+  const env = await worker.getEnv()
+  await seedIncidents(env.DB)
+  await env.DB.prepare(
+    `INSERT INTO action_records
+       (id, incident_id, sequence, type, plan_step_id, details, reason,
+        recorded_at, recorded_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  )
+    .bind(
+      "0199d000-0010-4000-8000-000000000001",
+      FIRST_INCIDENT_ID,
+      1,
+      "step_completed",
+      "0199c200-0001-4000-8000-000000000001",
+      "Confirmed the affected services and customer impact.",
+      null,
+      "2026-09-20T10:00:00.000Z",
+      null,
+    )
+    .run()
+
+  const firstResponse = await server.fetch(
+    `/api/v1/incidents/${FIRST_INCIDENT_ID}/closure`,
+    { method: "PUT" },
+  )
+  const closure = (await firstResponse.json()) as Record<string, unknown>
+
+  expect(firstResponse.status).toBe(200)
+  expect(closure).toMatchObject({
+    incident_id: FIRST_INCIDENT_ID,
+    status: "closed",
+    closed_by: null,
+    review_proposal_id: null,
+  })
+  expect(closure.closed_at).toMatch(
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
+  )
+
+  const retryResponse = await server.fetch(
+    `/api/v1/incidents/${FIRST_INCIDENT_ID}/closure`,
+    { method: "PUT" },
+  )
+
+  expect(retryResponse.status).toBe(200)
+  expect(await retryResponse.json()).toEqual(closure)
+  expect(
+    await env.DB.prepare("SELECT COUNT(*) AS count FROM review_proposals").first(),
+  ).toEqual({ count: 0 })
+})
+
+test("aggregates repeated and out-of-order actions into the active proposal", async () => {
+  const env = await worker.getEnv()
+  await seedIncidents(env.DB)
+  const insertRecord = env.DB.prepare(
+    `INSERT INTO action_records
+       (id, incident_id, sequence, type, plan_step_id, details, reason,
+        recorded_at, recorded_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  )
+
+  await env.DB.batch([
+    insertRecord.bind(
+      "0199d000-0020-4000-8000-000000000001",
+      FIRST_INCIDENT_ID,
+      1,
+      "step_completed",
+      "0199c200-0001-4000-8000-000000000001",
+      "Assessed the initial customer impact.",
+      null,
+      "2026-09-20T10:00:00.000Z",
+      null,
+    ),
+    insertRecord.bind(
+      "0199d000-0020-4000-8000-000000000002",
+      FIRST_INCIDENT_ID,
+      2,
+      "step_completed",
+      "0199c200-0001-4000-8000-000000000001",
+      "Repeated the assessment after the affected region changed.",
+      null,
+      "2026-09-20T10:01:00.000Z",
+      null,
+    ),
+    insertRecord.bind(
+      "0199d000-0020-4000-8000-000000000003",
+      THIRD_INCIDENT_ID,
+      1,
+      "step_completed",
+      "0199c200-0002-4000-8000-000000000002",
+      "Inspected identity dependencies before assessing the wider impact.",
+      null,
+      "2026-09-20T10:02:00.000Z",
+      null,
+    ),
+    insertRecord.bind(
+      "0199d000-0020-4000-8000-000000000004",
+      THIRD_INCIDENT_ID,
+      2,
+      "step_completed",
+      "0199c200-0002-4000-8000-000000000001",
+      "Confirmed failures were limited to mobile clients.",
+      null,
+      "2026-09-20T10:03:00.000Z",
+      null,
+    ),
+  ])
+
+  const firstResponse = await server.fetch(
+    `/api/v1/incidents/${FIRST_INCIDENT_ID}/closure`,
+    { method: "PUT" },
+  )
+  const firstClosure = (await firstResponse.json()) as {
+    review_proposal_id: string
+  }
+
+  expect(firstResponse.status).toBe(200)
+  expect(firstClosure.review_proposal_id).toMatch(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+  )
+
+  const secondResponse = await server.fetch(
+    `/api/v1/incidents/${THIRD_INCIDENT_ID}/closure`,
+    { method: "PUT" },
+  )
+  const secondClosure = (await secondResponse.json()) as {
+    review_proposal_id: string
+  }
+
+  expect(secondResponse.status).toBe(200)
+  expect(secondClosure.review_proposal_id).toBe(firstClosure.review_proposal_id)
+  expect(
+    await env.DB.prepare(
+      `SELECT plan_id, source_plan_version_id, status, failure_reason, revision
+       FROM review_proposals
+       WHERE id = ?`,
+    )
+      .bind(firstClosure.review_proposal_id)
+      .first(),
+  ).toEqual({
+    plan_id: PLAN_ID,
+    source_plan_version_id: PREVIOUS_VERSION_ID,
+    status: "updating",
+    failure_reason: null,
+    revision: 2,
+  })
+
+  const retryResponse = await server.fetch(
+    `/api/v1/incidents/${THIRD_INCIDENT_ID}/closure`,
+    { method: "PUT" },
+  )
+
+  expect(retryResponse.status).toBe(200)
+  expect(await retryResponse.json()).toEqual(secondClosure)
+  expect(
+    await env.DB.prepare("SELECT revision FROM review_proposals WHERE id = ?")
+      .bind(firstClosure.review_proposal_id)
+      .first(),
+  ).toEqual({ revision: 2 })
 })

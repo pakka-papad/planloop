@@ -15,11 +15,15 @@ import {
 } from "../domain/scalars"
 import { findActionPlanVersionSelection } from "../persistence/action-plans"
 import {
+  closeIncidentWithoutProposal,
+  closeIncidentWithProposal,
   findIncidentById,
   findIncidents,
   insertActionRecord,
   insertIncident,
 } from "../persistence/incidents"
+import { findProposalWorkflowTarget } from "../persistence/review-proposals"
+import type { StartReviewProposalGeneration } from "./review-proposal-generation"
 
 export const ListIncidentsCursorSchema = v.strictObject({
   createdAt: UtcTimestampSchema,
@@ -75,6 +79,15 @@ export type AddActionRecordResult =
   | { readonly status: "incident_not_found" }
   | { readonly status: "incident_closed" }
   | { readonly status: "plan_step_not_in_incident" }
+
+export type CloseIncidentResult =
+  | { readonly status: "closed"; readonly incident: Incident }
+  | { readonly status: "incident_not_found" }
+  | {
+      readonly status: "incident_has_unrecorded_steps"
+      readonly unrecordedPlanStepIds: readonly Uuid[]
+    }
+  | { readonly status: "workflow_unavailable" }
 
 function checkActionRecordTarget(
   incident: Incident,
@@ -170,7 +183,7 @@ export async function addActionRecord(
 
   if (failure !== null) return failure
 
-  const record: ActionRecord = {
+  const record: Omit<ActionRecord, "sequence"> = {
     id: generateUuid(),
     incidentId,
     type: input.type,
@@ -181,8 +194,10 @@ export async function addActionRecord(
     recordedBy: null,
   }
 
-  if (await insertActionRecord(database, record)) {
-    return { status: "created", record }
+  const insertedRecord = await insertActionRecord(database, record)
+
+  if (insertedRecord !== null) {
+    return { status: "created", record: insertedRecord }
   }
 
   incident = await findIncidentById(database, incidentId)
@@ -194,4 +209,118 @@ export async function addActionRecord(
   if (concurrentFailure !== null) return concurrentFailure
 
   throw new Error(`Failed to add action record to incident ${incidentId}`)
+}
+
+function unrecordedPlanStepIds(incident: Incident): readonly Uuid[] {
+  const recordedStepIds = new Set(
+    incident.actionRecords.flatMap((record) =>
+      record.planStepId === null ? [] : [record.planStepId],
+    ),
+  )
+
+  return incident.pinnedPlanVersion.steps
+    .filter((step) => !recordedStepIds.has(step.id))
+    .map((step) => step.id)
+}
+
+function followedPlanAsWritten(incident: Incident): boolean {
+  const planSteps = incident.pinnedPlanVersion.steps
+
+  return (
+    incident.actionRecords.length === planSteps.length &&
+    incident.actionRecords.every(
+      (record, index) =>
+        record.type === "step_completed" &&
+        record.planStepId === planSteps[index]?.id,
+    )
+  )
+}
+
+export async function closeIncident(
+  database: D1Database,
+  startReviewProposalGeneration: StartReviewProposalGeneration,
+  incidentId: Uuid,
+): Promise<CloseIncidentResult> {
+  let closedIncident: Incident | null = null
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const incident = await findIncidentById(database, incidentId)
+
+    if (incident === null) return { status: "incident_not_found" }
+
+    if (incident.status === "closed") {
+      closedIncident = incident
+      break
+    }
+
+    const missingStepIds = unrecordedPlanStepIds(incident)
+
+    if (missingStepIds.length > 0) {
+      return {
+        status: "incident_has_unrecorded_steps",
+        unrecordedPlanStepIds: missingStepIds,
+      }
+    }
+
+    const closedAt = currentUtcTimestamp()
+    const planWasFollowedAsWritten = followedPlanAsWritten(incident)
+    let closureSaved: boolean
+
+    if (planWasFollowedAsWritten) {
+      closureSaved = await closeIncidentWithoutProposal(
+        database,
+        incidentId,
+        closedAt,
+      )
+    } else {
+      const proposalId = generateUuid()
+      closureSaved = await closeIncidentWithProposal(
+        database,
+        incidentId,
+        proposalId,
+        closedAt,
+      )
+    }
+
+    if (!closureSaved) continue
+
+    closedIncident = await findIncidentById(database, incidentId)
+
+    if (closedIncident === null || closedIncident.status !== "closed") {
+      throw new Error(`Failed to load closed incident ${incidentId}`)
+    }
+
+    break
+  }
+
+  if (closedIncident === null) {
+    throw new Error(`Failed to close incident ${incidentId}`)
+  }
+
+  const proposalId = closedIncident.reviewProposalId
+
+  if (proposalId !== null) {
+    const target = await findProposalWorkflowTarget(database, proposalId)
+
+    if (target === null) {
+      throw new Error(
+        `Incident ${incidentId} references a missing review proposal`,
+      )
+    }
+
+    // `updating` includes the post-commit window before Workflow startup, so
+    // retries attempt the same deterministic execution until generation finishes.
+    const shouldStartWorkflow = target.status === "updating"
+
+    if (shouldStartWorkflow) {
+      const workflowStarted = await startReviewProposalGeneration({
+        proposalId,
+        revision: target.revision,
+      })
+
+      if (!workflowStarted) return { status: "workflow_unavailable" }
+    }
+  }
+
+  return { status: "closed", incident: closedIncident }
 }

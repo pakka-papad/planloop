@@ -5,7 +5,7 @@ export async function handleHealth(env: Env): Promise<Response> {
     status: "ok",
     services: {
       d1: row?.ready === 1 ? "ready" : "unavailable",
-      workflows: env.CLOSE_INCIDENT_WORKFLOW ? "ready" : "unavailable",
+      workflows: env.GENERATE_REVIEW_PROPOSAL_WORKFLOW ? "ready" : "unavailable",
       ai: "live-opt-in",
     },
   })

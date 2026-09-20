@@ -105,6 +105,7 @@ CREATE INDEX incidents_review_proposal_idx
 CREATE TABLE action_records (
   id TEXT PRIMARY KEY,
   incident_id TEXT NOT NULL REFERENCES incidents(id),
+  sequence INTEGER NOT NULL,
   type TEXT NOT NULL,
   plan_step_id TEXT REFERENCES action_plan_steps(id),
   details TEXT,
@@ -113,8 +114,8 @@ CREATE TABLE action_records (
   recorded_by TEXT
 );
 
-CREATE INDEX action_records_incident_order_idx
-  ON action_records(incident_id, recorded_at, id);
+CREATE UNIQUE INDEX action_records_incident_sequence_idx
+  ON action_records(incident_id, sequence);
 
 CREATE INDEX action_records_incident_step_idx
   ON action_records(incident_id, plan_step_id);

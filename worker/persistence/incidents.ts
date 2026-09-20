@@ -9,8 +9,44 @@ import type {
   IncidentStatus,
 } from "../domain/incident"
 import type { ContributingIncident } from "../domain/review-proposal"
-import { UtcTimestampSchema, UuidSchema, type Uuid } from "../domain/scalars"
+import {
+  UtcTimestampSchema,
+  UuidSchema,
+  type UtcTimestamp,
+  type Uuid,
+} from "../domain/scalars"
 import { findActionPlanVersionById } from "./action-plans"
+
+const activeProposalStatuses = "'updating', 'pending_review', 'failed', 'no_change'"
+
+const allPinnedStepsRecorded = `NOT EXISTS (
+  SELECT 1
+  FROM action_plan_steps step
+  WHERE step.plan_version_id = incident.plan_version_id
+    AND NOT EXISTS (
+      SELECT 1
+      FROM action_records record
+      WHERE record.incident_id = incident.id
+        AND record.plan_step_id = step.id
+    )
+)`
+
+const planWasFollowedAsWritten = `(
+  (SELECT COUNT(*) FROM action_records record WHERE record.incident_id = incident.id) =
+  (SELECT COUNT(*) FROM action_plan_steps step WHERE step.plan_version_id = incident.plan_version_id)
+  AND NOT EXISTS (
+    SELECT 1
+    FROM action_records record
+    LEFT JOIN action_plan_steps step
+      ON step.plan_version_id = incident.plan_version_id
+     AND step.position = record.sequence
+    WHERE record.incident_id = incident.id
+      AND (
+        record.type <> 'step_completed'
+        OR record.plan_step_id IS NOT step.id
+      )
+  )
+)`
 
 export interface IncidentRow {
   id: string
@@ -28,6 +64,7 @@ export interface IncidentRow {
 export interface ActionRecordRow {
   id: string
   incident_id: string
+  sequence: number
   type: string
   plan_step_id: string | null
   details: string | null
@@ -67,6 +104,7 @@ export function toActionRecord(row: ActionRecordRow): ActionRecord {
   return {
     id: v.parse(UuidSchema, row.id),
     incidentId: v.parse(UuidSchema, row.incident_id),
+    sequence: row.sequence,
     type: toActionRecordType(row.type),
     planStepId: row.plan_step_id === null ? null : v.parse(UuidSchema, row.plan_step_id),
     details: row.details,
@@ -159,10 +197,11 @@ export async function findIncidentById(
 
   const { results: actionRecords } = await database
     .prepare(
-      `SELECT id, incident_id, type, plan_step_id, details, reason, recorded_at, recorded_by
+      `SELECT id, incident_id, sequence, type, plan_step_id, details, reason,
+              recorded_at, recorded_by
        FROM action_records
        WHERE incident_id = ?
-       ORDER BY recorded_at, id`,
+       ORDER BY sequence`,
     )
     .bind(incidentId)
     .all<ActionRecordRow>()
@@ -172,18 +211,24 @@ export async function findIncidentById(
 
 export async function insertActionRecord(
   database: D1Database,
-  record: ActionRecord,
-): Promise<boolean> {
+  record: Omit<ActionRecord, "sequence">,
+): Promise<ActionRecord | null> {
   const statement =
     record.planStepId === null
       ? database
           .prepare(
             `INSERT INTO action_records
-               (id, incident_id, type, plan_step_id, details, reason, recorded_at, recorded_by)
-             SELECT ?, incident.id, ?, NULL, ?, ?, ?, ?
+               (id, incident_id, sequence, type, plan_step_id, details, reason,
+                recorded_at, recorded_by)
+             SELECT ?, incident.id,
+                    (SELECT COALESCE(MAX(existing.sequence), 0) + 1
+                     FROM action_records existing
+                     WHERE existing.incident_id = incident.id),
+                    ?, NULL, ?, ?, ?, ?
              FROM incidents incident
              WHERE incident.id = ?
-               AND incident.status = 'open'`,
+               AND incident.status = 'open'
+             RETURNING sequence`,
           )
           .bind(
             record.id,
@@ -197,13 +242,19 @@ export async function insertActionRecord(
       : database
           .prepare(
             `INSERT INTO action_records
-               (id, incident_id, type, plan_step_id, details, reason, recorded_at, recorded_by)
-             SELECT ?, incident.id, ?, step.id, ?, ?, ?, ?
+               (id, incident_id, sequence, type, plan_step_id, details, reason,
+                recorded_at, recorded_by)
+             SELECT ?, incident.id,
+                    (SELECT COALESCE(MAX(existing.sequence), 0) + 1
+                     FROM action_records existing
+                     WHERE existing.incident_id = incident.id),
+                    ?, step.id, ?, ?, ?, ?
              FROM incidents incident
              JOIN action_plan_steps step
                ON step.id = ? AND step.plan_version_id = incident.plan_version_id
              WHERE incident.id = ?
-               AND incident.status = 'open'`,
+               AND incident.status = 'open'
+             RETURNING sequence`,
           )
           .bind(
             record.id,
@@ -216,9 +267,119 @@ export async function insertActionRecord(
             record.incidentId,
           )
 
-  const result = await statement.run()
+  const inserted = await statement.first<{ sequence: number }>()
+
+  return inserted === null ? null : { ...record, sequence: inserted.sequence }
+}
+
+export async function closeIncidentWithoutProposal(
+  database: D1Database,
+  incidentId: Uuid,
+  closedAt: UtcTimestamp,
+): Promise<boolean> {
+  const result = await database
+    .prepare(
+      `UPDATE incidents AS incident
+       SET status = 'closed',
+           review_proposal_id = NULL,
+           closed_at = ?,
+           closed_by = NULL
+       WHERE incident.id = ?
+         AND incident.status = 'open'
+         AND ${planWasFollowedAsWritten}`,
+    )
+    .bind(closedAt, incidentId)
+    .run()
 
   return result.meta.changes === 1
+}
+
+export async function closeIncidentWithProposal(
+  database: D1Database,
+  incidentId: Uuid,
+  newProposalId: Uuid,
+  closedAt: UtcTimestamp,
+): Promise<boolean> {
+  const existingProposal = database
+    .prepare(
+      `UPDATE review_proposals
+       SET status = 'updating',
+           failure_reason = NULL,
+           revision = revision + 1,
+           updated_at = ?
+       WHERE id = (
+         SELECT proposal.id
+         FROM incidents incident
+         JOIN action_plan_versions version ON version.id = incident.plan_version_id
+         JOIN review_proposals proposal ON proposal.plan_id = version.plan_id
+         WHERE incident.id = ?
+           AND incident.status = 'open'
+           AND proposal.status IN (${activeProposalStatuses})
+           AND ${allPinnedStepsRecorded}
+           AND NOT ${planWasFollowedAsWritten}
+         ORDER BY proposal.created_at, proposal.id
+         LIMIT 1
+       )`,
+    )
+    .bind(closedAt, incidentId)
+
+  const newProposal = database
+    .prepare(
+      `INSERT INTO review_proposals
+         (id, plan_id, source_plan_version_id, status, failure_reason, revision,
+          created_at, updated_at)
+       SELECT ?, version.plan_id, incident.plan_version_id, 'updating', NULL, 1, ?, ?
+       FROM incidents incident
+       JOIN action_plan_versions version ON version.id = incident.plan_version_id
+       WHERE incident.id = ?
+         AND incident.status = 'open'
+         AND ${allPinnedStepsRecorded}
+         AND NOT ${planWasFollowedAsWritten}
+         AND NOT EXISTS (
+           SELECT 1
+           FROM review_proposals proposal
+           WHERE proposal.plan_id = version.plan_id
+             AND proposal.status IN (${activeProposalStatuses})
+         )`,
+    )
+    .bind(newProposalId, closedAt, closedAt, incidentId)
+
+  const closeIncident = database
+    .prepare(
+      `UPDATE incidents AS incident
+       SET status = 'closed',
+           review_proposal_id = (
+             SELECT proposal.id
+             FROM action_plan_versions version
+             JOIN review_proposals proposal ON proposal.plan_id = version.plan_id
+             WHERE version.id = incident.plan_version_id
+               AND proposal.status IN (${activeProposalStatuses})
+             ORDER BY proposal.created_at, proposal.id
+             LIMIT 1
+           ),
+           closed_at = ?,
+           closed_by = NULL
+       WHERE incident.id = ?
+         AND incident.status = 'open'
+         AND ${allPinnedStepsRecorded}
+         AND NOT ${planWasFollowedAsWritten}
+         AND EXISTS (
+           SELECT 1
+           FROM action_plan_versions version
+           JOIN review_proposals proposal ON proposal.plan_id = version.plan_id
+           WHERE version.id = incident.plan_version_id
+             AND proposal.status IN (${activeProposalStatuses})
+         )`,
+    )
+    .bind(closedAt, incidentId)
+
+  const results = await database.batch([
+    existingProposal,
+    newProposal,
+    closeIncident,
+  ])
+
+  return results[2]?.meta.changes === 1
 }
 
 export async function findIncidents(

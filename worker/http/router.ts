@@ -1,3 +1,4 @@
+import { startReviewProposalGeneration } from "../workflows/generate-review-proposal"
 import {
   handleCreateActionPlan,
   handleGetActionPlan,
@@ -6,6 +7,7 @@ import {
 import { handleHealth } from "./health"
 import {
   handleAddActionRecord,
+  handleCloseIncident,
   handleCreateIncident,
   handleGetIncident,
   handleListIncidents,
@@ -69,6 +71,22 @@ const routes: readonly Route[] = [
     }),
     handle: (request, env, match) =>
       handleAddActionRecord(request, env.DB, match.pathname.groups.incidentId),
+  },
+  {
+    method: "PUT",
+    pattern: new URLPattern({
+      pathname: "/api/v1/incidents/:incidentId/closure",
+    }),
+    handle: (_request, env, match) =>
+      handleCloseIncident(
+        env.DB,
+        (input) =>
+          startReviewProposalGeneration(
+            env.GENERATE_REVIEW_PROPOSAL_WORKFLOW,
+            input,
+          ),
+        match.pathname.groups.incidentId,
+      ),
   },
 ]
 

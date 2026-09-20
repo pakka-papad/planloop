@@ -171,7 +171,7 @@ An incident contains:
 | `symptoms` | string | 1–4000 characters; retained after trimming. |
 | `status` | enum | `open` or `closed`; reopening is not supported. |
 | `pinned_plan_version` | plan version | Complete immutable version selected at creation. |
-| `action_records` | array | Ordered by `recorded_at`, then `id`, ascending. |
+| `action_records` | array | Ordered by `sequence` ascending. |
 | `review_proposal_id` | UUIDv4 or null | Proposal targeted by this incident's closure; remains `null` when the plan was followed as written. |
 | `created_at` | timestamp | Set by the server when the incident is created. |
 | `created_by` | string or null | Server-owned actor ID. |
@@ -198,6 +198,7 @@ An action record contains:
 | --- | --- | --- |
 | `id` | UUIDv4 | Server-generated. |
 | `incident_id` | UUIDv4 | Owning incident. |
+| `sequence` | integer | Server-generated, starts at 1, and is unique and contiguous within the incident. |
 | `type` | enum | `step_completed`, `step_skipped`, `step_modified`, or `additional_action`. |
 | `plan_step_id` | UUIDv4 or null | Required for step records and must belong to the pinned version; prohibited for `additional_action`. |
 | `details` | string or null | Original human description of what happened; maximum 2000 characters. |
@@ -212,7 +213,7 @@ Request rules:
 - `step_modified` requires `plan_step_id`, `details`, and `reason`.
 - `additional_action` requires `details`, prohibits `plan_step_id`, and permits an optional `reason`.
 - A pinned step may have multiple action records of any step-record type.
-- Action records are append-only.
+- Action records are append-only. The server assigns their sequence in creation order; clients do not send it.
 - All records are retained as evidence for review-proposal generation.
 
 #### `POST /incidents/{incident_id}/action-records`
@@ -236,9 +237,9 @@ Returns `201 Created` with the complete action record.
 
 The request has no body. Every step in the pinned plan must have at least one action record. Otherwise the server returns `409` with code `incident_has_unrecorded_steps` and `unrecorded_plan_step_ids`, an ordered array of the missing step IDs.
 
-The plan was followed as written when every pinned step has a `step_completed` record and the incident has no `step_skipped`, `step_modified`, or `additional_action` records. `details` on a `step_completed` record do not change this classification. Such an incident closes with `review_proposal_id: null`; the server neither creates nor updates a proposal and does not start a Workflow. Retrying its closure returns the existing closure state.
+The plan was followed as written only when the action records ordered by `sequence` correspond one-to-one with the pinned steps ordered by `position`: their counts match, and each action record is `step_completed` for the step at the same position. Repeated, omitted, out-of-order, skipped, modified, or additional actions are deviations. `details` on a `step_completed` record do not change this classification. An incident that followed the plan closes with `review_proposal_id: null`; the server neither creates nor updates a proposal and does not start a Workflow. Retrying its closure returns the existing closure state.
 
-For any other incident, the server selects the plan's active proposal or creates one, closes the incident, and records the proposal reference in one database transaction. An existing `no_change`, `pending_review`, or `failed` proposal moves to `updating`; moving from `failed` also clears `failure_reason`. An already `updating` proposal remains there. After the transaction commits, the server starts a close-incident Workflow using a deterministic execution ID derived from the proposal ID and revision.
+For any other incident, the server selects the plan's active proposal or creates one, closes the incident, and records the proposal reference in one database transaction. An existing `no_change`, `pending_review`, or `failed` proposal moves to `updating`; moving from `failed` also clears `failure_reason`. An already `updating` proposal remains there. After the transaction commits, the server starts a review-proposal generation Workflow using a deterministic execution ID derived from the proposal ID and revision.
 
 If the Workflow cannot start, the request returns `503`, but the committed closure and proposal state remain. Retrying the closure while the proposal is still `updating` repeats the same idempotent start operation; an existing execution counts as success. If the proposal is no longer `updating`, the retry returns the existing closure state without starting another Workflow.
 
@@ -298,6 +299,31 @@ A review proposal contains:
 | `created_plan_version` | plan version or null | Present only after approval. |
 
 `updating`, `pending_review`, `failed`, and `no_change` are active aggregation states. A `no_change` proposal is dormant: it cannot be edited or decided, requires no review, and returns to `updating` only when a later incident contains a deviation. Approved and rejected proposals are immutable history; a later deviating incident may create a new active proposal for the same plan.
+
+```mermaid
+stateDiagram-v2
+    direction LR
+
+    Updating: updating
+    PendingReview: pending_review
+    Failed: failed
+    NoChange: no_change
+    Approved: approved
+    Rejected: rejected
+
+    [*] --> Updating: deviating incident
+    Updating --> PendingReview: changes generated
+    Updating --> NoChange: no changes generated
+    Updating --> Failed: generation fails
+    Failed --> Updating: retry or incident attached
+    PendingReview --> Updating: incident attached
+    NoChange --> Updating: incident attached
+    PendingReview --> NoChange: no-change edit
+    PendingReview --> Approved: approve
+    PendingReview --> Rejected: reject
+    Approved --> [*]
+    Rejected --> [*]
+```
 
 ### 4.1 Find review proposals
 

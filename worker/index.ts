@@ -1,4 +1,4 @@
-export { CloseIncidentWorkflow } from "./workflow"
+export { GenerateReviewProposalWorkflow } from "./workflows/generate-review-proposal"
 
 import { internalError } from "./http/problems"
 import { route } from "./http/router"
