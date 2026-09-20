@@ -96,6 +96,27 @@ export async function saveGeneratedProposalDraft(
   })
 
   const changeIds = draft.changes.map(() => generateUuid())
+  const proposedSteps = draft.proposedPlan.steps.map((step, index) => ({
+    id: stepIds[index],
+    sourceStepId: step.sourceStepId,
+    position: index + 1,
+    title: step.title,
+    description: step.description,
+  }))
+  const proposedChanges = draft.changes.map((change, index) => ({
+    id: changeIds[index],
+    position: index + 1,
+    type: change.type,
+    sourceStepId: "sourceStepId" in change ? change.sourceStepId : null,
+    proposedStepId: proposedStepIdForChange(change, stepIds, stepIdsBySourceId),
+    rationale: change.rationale,
+  }))
+  const evidence = draft.changes.flatMap((change, index) =>
+    change.actionRecordIds.map((actionRecordId) => ({
+      changeId: changeIds[index],
+      actionRecordId,
+    })),
+  )
   const statements: D1PreparedStatement[] = [
     database
       .prepare(
@@ -120,77 +141,57 @@ export async function saveGeneratedProposalDraft(
          WHERE proposal_id = ? AND ${proposalIsCurrent}`,
       )
       .bind(proposalId, proposalId, expectedRevision),
-  ]
-
-  draft.proposedPlan.steps.forEach((step, index) => {
-    statements.push(
-      database
-        .prepare(
-          `INSERT INTO review_proposal_steps
-             (id, proposal_id, source_step_id, position, title, description)
-           SELECT ?, ?, ?, ?, ?, ?
-           WHERE ${proposalIsCurrent}`,
-        )
-        .bind(
-          stepIds[index],
-          proposalId,
-          step.sourceStepId,
-          index + 1,
-          step.title,
-          step.description,
-          proposalId,
-          expectedRevision,
-        ),
-    )
-  })
-
-  draft.changes.forEach((change, index) => {
-    const proposedStepId = proposedStepIdForChange(
-      change,
-      stepIds,
-      stepIdsBySourceId,
-    )
-
-    statements.push(
-      database
-        .prepare(
-          `INSERT INTO review_proposal_changes
-             (id, proposal_id, position, type, source_step_id,
-              proposed_step_id, rationale)
-           SELECT ?, ?, ?, ?, ?, ?, ?
-           WHERE ${proposalIsCurrent}`,
-        )
-        .bind(
-          changeIds[index],
-          proposalId,
-          index + 1,
-          change.type,
-          "sourceStepId" in change ? change.sourceStepId : null,
-          proposedStepId,
-          change.rationale,
-          proposalId,
-          expectedRevision,
-        ),
-    )
-
-    for (const actionRecordId of change.actionRecordIds) {
-      statements.push(
-        database
-          .prepare(
-            `INSERT INTO review_proposal_change_evidence
-               (change_id, action_record_id)
-             SELECT ?, ?
-             WHERE ${proposalIsCurrent}`,
-          )
-          .bind(
-            changeIds[index],
-            actionRecordId,
-            proposalId,
-            expectedRevision,
-          ),
+    database
+      .prepare(
+        `INSERT INTO review_proposal_steps
+           (id, proposal_id, source_step_id, position, title, description)
+         SELECT json_extract(entry.value, '$.id'),
+                ?,
+                json_extract(entry.value, '$.sourceStepId'),
+                json_extract(entry.value, '$.position'),
+                json_extract(entry.value, '$.title'),
+                json_extract(entry.value, '$.description')
+         FROM json_each(?) entry
+         WHERE ${proposalIsCurrent}`,
       )
-    }
-  })
+      .bind(
+        proposalId,
+        JSON.stringify(proposedSteps),
+        proposalId,
+        expectedRevision,
+      ),
+    database
+      .prepare(
+        `INSERT INTO review_proposal_changes
+           (id, proposal_id, position, type, source_step_id,
+            proposed_step_id, rationale)
+         SELECT json_extract(entry.value, '$.id'),
+                ?,
+                json_extract(entry.value, '$.position'),
+                json_extract(entry.value, '$.type'),
+                json_extract(entry.value, '$.sourceStepId'),
+                json_extract(entry.value, '$.proposedStepId'),
+                json_extract(entry.value, '$.rationale')
+         FROM json_each(?) entry
+         WHERE ${proposalIsCurrent}`,
+      )
+      .bind(
+        proposalId,
+        JSON.stringify(proposedChanges),
+        proposalId,
+        expectedRevision,
+      ),
+    database
+      .prepare(
+        `INSERT INTO review_proposal_change_evidence
+           (change_id, action_record_id)
+         SELECT json_extract(entry.value, '$.changeId'),
+                json_extract(entry.value, '$.actionRecordId')
+         FROM json_each(?) entry
+         WHERE ${proposalIsCurrent}`,
+      )
+      .bind(JSON.stringify(evidence), proposalId, expectedRevision),
+  ]
 
   const updateIndex = statements.length
 

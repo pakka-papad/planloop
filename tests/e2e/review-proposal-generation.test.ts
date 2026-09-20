@@ -182,6 +182,56 @@ test("validates and saves a cited generated draft", async () => {
   ).toEqual({ event_type: "review_proposal_generation_completed" })
 })
 
+test("bulk-saves a proposal with many steps, changes, and citations", async () => {
+  const database = (await worker.getEnv()).DB
+  const context = await findReviewProposalGenerationContext(database, proposalId, 1)
+  const addedSteps = Array.from({ length: 49 }, (_, index) => ({
+    sourceStepId: null,
+    title: `Check dependency ${index + 1}`,
+    description: `Verify dependency ${index + 1} before increasing regional traffic.`,
+  }))
+  const draft = validateGeneratedProposalDraft(
+    {
+      summary: "Add the dependency checks observed during incident response.",
+      proposedPlan: {
+        name: context!.sourcePlanVersion.name,
+        useWhen: context!.sourcePlanVersion.useWhen,
+        steps: [
+          {
+            sourceStepId: STEP_ID,
+            title: "Measure customer impact",
+            description: "Compare latency and completion rate with the regional baseline.",
+          },
+          ...addedSteps,
+        ],
+      },
+      changes: addedSteps.map((_, index) => ({
+        type: "add_step",
+        proposedStepPosition: index + 2,
+        rationale: `Dependency ${index + 1} required an explicit check during response.`,
+        actionRecordIds: [ACTION_RECORD_ID],
+      })),
+    },
+    context!,
+  )
+
+  expect(await saveGeneratedProposalDraft(database, proposalId, 1, draft)).toBe(true)
+  expect(
+    await database
+      .prepare(
+        `SELECT
+           (SELECT COUNT(*) FROM review_proposal_steps WHERE proposal_id = ?) AS steps,
+           (SELECT COUNT(*) FROM review_proposal_changes WHERE proposal_id = ?) AS changes,
+           (SELECT COUNT(*)
+            FROM review_proposal_change_evidence evidence
+            JOIN review_proposal_changes change ON change.id = evidence.change_id
+            WHERE change.proposal_id = ?) AS citations`,
+      )
+      .bind(PROPOSAL_ID, PROPOSAL_ID, PROPOSAL_ID)
+      .first(),
+  ).toEqual({ steps: 50, changes: 49, citations: 49 })
+})
+
 test("does not overwrite a newer proposal revision", async () => {
   const database = (await worker.getEnv()).DB
   const context = await findReviewProposalGenerationContext(database, proposalId, 1)
