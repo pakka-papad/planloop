@@ -1,4 +1,4 @@
-import { getJson } from "./client"
+import { getJson, postJson } from "./client"
 
 export interface PlanStep {
   readonly id: string
@@ -45,6 +45,15 @@ export interface ActionPlanPage {
   readonly next_cursor: string | null
 }
 
+export interface CreateActionPlanRequest {
+  readonly name: string
+  readonly use_when: string
+  readonly steps: readonly {
+    readonly title: string
+    readonly description: string
+  }[]
+}
+
 export function listActionPlans(
   cursor: string | null = null,
   signal?: AbortSignal,
@@ -60,4 +69,8 @@ export function listActionPlans(
 
 export function getActionPlan(id: string, signal?: AbortSignal): Promise<ActionPlan> {
   return getJson<ActionPlan>(`/api/v1/action-plans/${encodeURIComponent(id)}`, signal)
+}
+
+export function createActionPlan(input: CreateActionPlanRequest): Promise<ActionPlan> {
+  return postJson<ActionPlan>("/api/v1/action-plans", input)
 }

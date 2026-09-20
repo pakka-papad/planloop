@@ -15,8 +15,8 @@ export class ApiError extends Error {
   }
 }
 
-export async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(path, { headers: { accept: "application/json" }, signal })
+async function requestJson<T>(path: string, init: RequestInit): Promise<T> {
+  const response = await fetch(path, init)
 
   if (!response.ok) {
     let problem: ProblemDetails | null = null
@@ -31,6 +31,21 @@ export async function getJson<T>(path: string, signal?: AbortSignal): Promise<T>
   }
 
   return response.json() as Promise<T>
+}
+
+export function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
+  return requestJson(path, { headers: { accept: "application/json" }, signal })
+}
+
+export function postJson<T>(path: string, body: unknown): Promise<T> {
+  return requestJson(path, {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+  })
 }
 
 export function isAbortError(cause: unknown): boolean {

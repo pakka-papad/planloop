@@ -7,6 +7,7 @@ import { useEffect, useSyncExternalStore, type ReactNode } from "react"
 import { AppLink } from "./navigation"
 import { ActionPlanPage } from "./pages/ActionPlanPage"
 import { ActionPlansPage } from "./pages/ActionPlansPage"
+import { CreateActionPlanPage } from "./pages/CreateActionPlanPage"
 import { HomePage } from "./pages/HomePage"
 import { PlaceholderPage } from "./pages/PlaceholderPage"
 
@@ -101,6 +102,14 @@ function resolveRoute(pathname: string): Route {
 
   if (pathname === "/action-plans") {
     return { content: <ActionPlansPage />, section: "action-plans", title: "Action plans" }
+  }
+
+  if (pathname === "/action-plans/new") {
+    return {
+      content: <CreateActionPlanPage />,
+      section: "action-plans",
+      title: "Create action plan",
+    }
   }
 
   const actionPlanMatch = pathname.match(/^\/action-plans\/([^/]+)$/)

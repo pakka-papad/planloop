@@ -2,6 +2,7 @@ import {
   ArrowClockwiseIcon,
   ArrowRightIcon,
   BookOpenTextIcon,
+  PlusIcon,
 } from "@phosphor-icons/react"
 import { useEffect, useState } from "react"
 
@@ -69,15 +70,24 @@ export function ActionPlansPage() {
             Approved guidance for diagnosing, containing, and resolving operational incidents.
           </p>
         </div>
-        <button
-          className="inline-flex w-fit items-center gap-2 rounded-md border bg-background px-3 py-2 text-sm font-semibold transition-colors hover:bg-accent disabled:opacity-50"
-          disabled={isLoading}
-          onClick={refresh}
-          type="button"
-        >
-          <ArrowClockwiseIcon aria-hidden="true" size={16} />
-          Refresh
-        </button>
+        <div className="flex flex-wrap gap-3">
+          <button
+            className="inline-flex items-center gap-2 rounded-md border bg-background px-3 py-2 text-sm font-semibold transition-colors hover:bg-accent disabled:opacity-50"
+            disabled={isLoading}
+            onClick={refresh}
+            type="button"
+          >
+            <ArrowClockwiseIcon aria-hidden="true" size={16} />
+            Refresh
+          </button>
+          <AppLink
+            className="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+            href="/action-plans/new"
+          >
+            <PlusIcon aria-hidden="true" size={16} weight="bold" />
+            New action plan
+          </AppLink>
+        </div>
       </div>
 
       {isLoading && plans.length === 0 ? (

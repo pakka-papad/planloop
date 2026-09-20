@@ -3,6 +3,8 @@ import {
   type MouseEvent,
 } from "react"
 
+import { navigateTo } from "./navigate"
+
 export function AppLink({
   href,
   onClick,
@@ -21,9 +23,7 @@ export function AppLink({
     ) return
 
     event.preventDefault()
-    window.history.pushState(null, "", href)
-    window.dispatchEvent(new PopStateEvent("popstate"))
-    window.scrollTo({ top: 0 })
+    navigateTo(href)
   }
 
   return <a href={href} onClick={navigate} {...props} />
