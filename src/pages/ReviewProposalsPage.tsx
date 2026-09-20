@@ -7,14 +7,14 @@ import { useEffect, useState } from "react"
 
 import {
   listReviewProposals,
-  type ReviewProposalStatus,
+  type ActiveReviewProposalStatus,
   type ReviewProposalSummary,
 } from "../api/review-proposals"
 import { errorMessage, isAbortError } from "../api/client"
 import { formatDateTime } from "../format"
 import { AppLink } from "../navigation"
 
-const statusPresentation: Record<ReviewProposalStatus, {
+const statusPresentation: Record<ActiveReviewProposalStatus, {
   readonly label: string
   readonly description: string
   readonly className: string
@@ -158,7 +158,10 @@ export function ReviewProposalsPage() {
                 >
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2 text-xs">
-                      <span className={`rounded-full px-2.5 py-1 font-semibold ${presentation.className}`}>
+                      <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-semibold ${presentation.className}`}>
+                        {proposal.status === "updating" ? (
+                          <span aria-hidden="true" className="size-3 animate-spin rounded-full border-2 border-current border-r-transparent" />
+                        ) : null}
                         {presentation.label}
                       </span>
                       <span className="text-muted-foreground">

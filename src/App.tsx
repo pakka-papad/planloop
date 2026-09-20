@@ -12,6 +12,7 @@ import { HomePage } from "./pages/HomePage"
 import { IncidentPage } from "./pages/IncidentPage"
 import { IncidentsPage } from "./pages/IncidentsPage"
 import { PlaceholderPage } from "./pages/PlaceholderPage"
+import { ReviewProposalPage } from "./pages/ReviewProposalPage"
 import { ReviewProposalsPage } from "./pages/ReviewProposalsPage"
 
 interface Route {
@@ -128,17 +129,13 @@ function resolveRoute(pathname: string, searchParams: URLSearchParams): Route {
     }
   }
 
-  if (/^\/review-proposals\/[^/]+$/.test(pathname)) {
+  const reviewProposalMatch = pathname.match(/^\/review-proposals\/([^/]+)$/)
+  if (reviewProposalMatch) {
+    const proposalId = reviewProposalMatch[1]
     return {
-      content: (
-        <PlaceholderPage
-          description="The focused proposal review experience will be implemented next."
-          eyebrow="Review proposals"
-          title="Review proposed plan changes."
-        />
-      ),
+      content: <ReviewProposalPage key={proposalId} proposalId={proposalId} />,
       section: "review-proposals",
-      title: "Review proposals",
+      title: "Review proposal",
     }
   }
 

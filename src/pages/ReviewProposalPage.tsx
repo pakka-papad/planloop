@@ -1,0 +1,620 @@
+import {
+  ArrowClockwiseIcon,
+  ArrowLeftIcon,
+  ArrowRightIcon,
+  CheckCircleIcon,
+} from "@phosphor-icons/react"
+import { useEffect, useState } from "react"
+
+import { errorMessage, isAbortError } from "../api/client"
+import type { ActionRecord } from "../api/incidents"
+import {
+  getReviewProposal,
+  retryReviewProposalGeneration,
+  type ProposalChange,
+  type ReviewProposal,
+  type ReviewProposalStatus,
+  type VersionedReviewProposal,
+} from "../api/review-proposals"
+import { formatDateTime } from "../format"
+import { AppLink } from "../navigation"
+
+const statusPresentation: Record<ReviewProposalStatus, {
+  readonly label: string
+  readonly description: string
+  readonly className: string
+}> = {
+  updating: {
+    label: "Generating",
+    description: "PlanLoop is combining incident evidence into an updated proposal.",
+    className: "bg-muted text-muted-foreground",
+  },
+  pending_review: {
+    label: "Ready for review",
+    description: "The proposed changes are ready for a reviewer.",
+    className: "bg-primary/10 text-primary",
+  },
+  failed: {
+    label: "Generation failed",
+    description: "Generation must be retried before this proposal can be reviewed.",
+    className: "bg-destructive/10 text-destructive",
+  },
+  no_change: {
+    label: "No changes recommended",
+    description: "The incident evidence did not justify changing this action plan.",
+    className: "bg-muted text-muted-foreground",
+  },
+  approved: {
+    label: "Approved",
+    description: "The proposal was approved and published as a new plan version.",
+    className: "bg-primary/10 text-primary",
+  },
+  rejected: {
+    label: "Rejected",
+    description: "The proposal was reviewed and rejected.",
+    className: "bg-muted text-muted-foreground",
+  },
+}
+
+export function ReviewProposalPage({ proposalId }: { readonly proposalId: string }) {
+  const [resource, setResource] = useState<VersionedReviewProposal | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [retryError, setRetryError] = useState<string | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [isRetrying, setIsRetrying] = useState(false)
+  const [requestKey, setRequestKey] = useState(0)
+  const proposalStatus = resource?.proposal.status
+
+  useEffect(() => {
+    const controller = new AbortController()
+
+    void getReviewProposal(proposalId, controller.signal)
+      .then(setResource)
+      .catch((cause: unknown) => {
+        if (!isAbortError(cause)) setError(errorMessage(cause))
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setIsLoading(false)
+      })
+
+    return () => controller.abort()
+  }, [proposalId, requestKey])
+
+  useEffect(() => {
+    if (proposalStatus !== "updating") return
+
+    const controller = new AbortController()
+    let timeoutId: number | undefined
+
+    async function poll() {
+      try {
+        const latest = await getReviewProposal(proposalId, controller.signal)
+        if (controller.signal.aborted) return
+
+        setResource(latest)
+
+        if (latest.proposal.status === "updating") {
+          timeoutId = window.setTimeout(() => void poll(), 3_000)
+        } else {
+          setRetryError(null)
+        }
+      } catch (cause) {
+        if (!controller.signal.aborted && !isAbortError(cause)) {
+          timeoutId = window.setTimeout(() => void poll(), 3_000)
+        }
+      }
+    }
+
+    timeoutId = window.setTimeout(() => void poll(), 2_000)
+
+    return () => {
+      controller.abort()
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId)
+    }
+  }, [proposalId, proposalStatus])
+
+  function retry() {
+    setError(null)
+    setIsLoading(true)
+    setRequestKey((current) => current + 1)
+  }
+
+  async function retryGeneration() {
+    if (resource === null || isRetrying) return
+
+    setRetryError(null)
+    setIsRetrying(true)
+
+    try {
+      setResource(await retryReviewProposalGeneration(proposalId, resource.etag))
+    } catch (cause) {
+      setRetryError(errorMessage(cause))
+
+      try {
+        setResource(await getReviewProposal(proposalId))
+      } catch {
+        // Keep the last readable proposal when refreshing its committed state fails.
+      }
+    } finally {
+      setIsRetrying(false)
+    }
+  }
+
+  return (
+    <main className="mx-auto max-w-7xl px-5 py-8 sm:px-8 sm:py-12">
+      <AppLink
+        className="inline-flex items-center gap-2 text-sm font-semibold text-muted-foreground transition-colors hover:text-foreground"
+        href="/review-proposals"
+      >
+        <ArrowLeftIcon aria-hidden="true" size={16} />
+        Review proposals
+      </AppLink>
+
+      {isLoading ? (
+        <div className="mt-8 space-y-6" aria-label="Loading review proposal">
+          <div className="h-48 animate-pulse rounded-xl border bg-muted" />
+          <div className="grid gap-6 lg:grid-cols-2">
+            <div className="h-[32rem] animate-pulse rounded-xl border bg-muted" />
+            <div className="h-[32rem] animate-pulse rounded-xl border bg-muted" />
+          </div>
+        </div>
+      ) : null}
+
+      {error && !isLoading ? (
+        <div className="mt-8 rounded-xl border border-destructive/30 bg-destructive/5 p-6" role="alert">
+          <p className="font-medium text-destructive">This review proposal could not be loaded.</p>
+          <p className="mt-1 text-sm text-muted-foreground">{error}</p>
+          <button
+            className="mt-4 cursor-pointer rounded-md bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground"
+            onClick={retry}
+            type="button"
+          >
+            Try again
+          </button>
+        </div>
+      ) : null}
+
+      {resource && !isLoading ? (
+        <ProposalView
+          isRetrying={isRetrying}
+          onRetryGeneration={() => void retryGeneration()}
+          proposal={resource.proposal}
+          retryError={retryError}
+        />
+      ) : null}
+    </main>
+  )
+}
+
+function ProposalView({
+  isRetrying,
+  onRetryGeneration,
+  proposal,
+  retryError,
+}: {
+  readonly isRetrying: boolean
+  readonly onRetryGeneration: () => void
+  readonly proposal: ReviewProposal
+  readonly retryError: string | null
+}) {
+  const presentation = statusPresentation[proposal.status]
+  const evidenceById = new Map(proposal.evidence.map((record) => [record.id, record]))
+  const incidentById = new Map(
+    proposal.contributing_incidents.map((incident) => [incident.id, incident]),
+  )
+
+  return (
+    <div className="mt-8 space-y-6">
+      <header className="rounded-xl border bg-card p-6 sm:p-8">
+        <div className="flex flex-wrap items-center gap-3 text-xs">
+          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-semibold ${presentation.className}`}>
+            {proposal.status === "updating" ? (
+              <span aria-hidden="true" className="size-3 animate-spin rounded-full border-2 border-current border-r-transparent" />
+            ) : null}
+            {presentation.label}
+          </span>
+          <span className="text-muted-foreground">
+            Source version {proposal.source_plan_version.version}
+          </span>
+          <span aria-hidden="true" className="text-border">•</span>
+          <span className="text-muted-foreground">Proposal revision {proposal.revision}</span>
+        </div>
+        <h1 className="mt-5 max-w-4xl text-3xl font-semibold tracking-tight sm:text-4xl">
+          {proposal.source_plan_version.name}
+        </h1>
+        <p className="mt-3 max-w-3xl leading-7 text-muted-foreground">
+          {proposal.draft?.summary ?? presentation.description}
+        </p>
+        <div className="mt-6 flex flex-wrap gap-x-6 gap-y-2 border-t pt-5 text-xs text-muted-foreground">
+          <span>Created {formatDateTime(proposal.created_at)}</span>
+          <span>Updated {formatDateTime(proposal.updated_at)}</span>
+          <span>
+            {proposal.contributing_incidents.length} contributing {proposal.contributing_incidents.length === 1 ? "incident" : "incidents"}
+          </span>
+        </div>
+
+        {proposal.failure_reason ? (
+          <div className="mt-6 rounded-lg border border-destructive/30 bg-destructive/5 p-4" role="alert">
+            <p className="text-sm font-semibold text-destructive">Generation failed</p>
+            <p className="mt-1 text-sm leading-6 text-muted-foreground">{proposal.failure_reason}</p>
+            {proposal.status === "failed" ? (
+              <button
+                className="mt-4 inline-flex cursor-pointer items-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={isRetrying}
+                onClick={onRetryGeneration}
+                type="button"
+              >
+                <ArrowClockwiseIcon aria-hidden="true" size={16} />
+                {isRetrying ? "Starting retry…" : "Retry generation"}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
+        {retryError ? (
+          <div className="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 p-4" role="alert">
+            <p className="text-sm font-medium text-destructive">{retryError}</p>
+            {proposal.status === "updating" ? (
+              <button
+                className="mt-3 inline-flex cursor-pointer items-center gap-2 rounded-md border bg-background px-3 py-2 text-sm font-semibold transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={isRetrying}
+                onClick={onRetryGeneration}
+                type="button"
+              >
+                <ArrowClockwiseIcon aria-hidden="true" size={16} />
+                {isRetrying ? "Starting retry…" : "Try starting again"}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
+        {proposal.decided_at ? (
+          <div className="mt-6 rounded-lg bg-muted/50 p-4 text-sm">
+            <p className="font-semibold">
+              {presentation.label} {formatDateTime(proposal.decided_at)}
+            </p>
+            {proposal.decision_comment ? (
+              <p className="mt-2 leading-6 text-muted-foreground">{proposal.decision_comment}</p>
+            ) : null}
+            {proposal.created_plan_version ? (
+              <AppLink
+                className="mt-3 inline-flex items-center gap-1.5 font-semibold text-primary"
+                href={`/action-plans/${proposal.plan_id}`}
+              >
+                View published version {proposal.created_plan_version.version}
+                <ArrowRightIcon aria-hidden="true" size={15} weight="bold" />
+              </AppLink>
+            ) : null}
+          </div>
+        ) : null}
+      </header>
+
+      {proposal.draft ? (
+        <>
+          <PlanComparison proposal={proposal} />
+          <Changes
+            changes={proposal.draft.changes}
+            evidenceById={evidenceById}
+            incidentById={incidentById}
+            proposal={proposal}
+          />
+        </>
+      ) : (
+        <section className="rounded-xl border bg-card p-8 text-center">
+          <h2 className="text-lg font-semibold">No generated draft yet</h2>
+          <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-muted-foreground">
+            {presentation.description}
+          </p>
+        </section>
+      )}
+
+      <ContributingIncidents proposal={proposal} />
+    </div>
+  )
+}
+
+function PlanComparison({ proposal }: { readonly proposal: ReviewProposal }) {
+  const draft = proposal.draft
+  if (draft === null) return null
+
+  return (
+    <section aria-labelledby="plan-comparison-heading">
+      <div className="mb-4">
+        <p className="text-sm font-semibold text-primary">Plan comparison</p>
+        <h2 className="mt-1 text-2xl font-semibold tracking-tight" id="plan-comparison-heading">
+          Current and proposed guidance
+        </h2>
+      </div>
+      <div className="grid gap-6 lg:grid-cols-2 lg:items-start">
+        <PlanPanel
+          changes={draft.changes}
+          kind="source"
+          name={proposal.source_plan_version.name}
+          steps={proposal.source_plan_version.steps}
+          useWhen={proposal.source_plan_version.use_when}
+          version={proposal.source_plan_version.version}
+        />
+        <PlanPanel
+          changes={draft.changes}
+          kind="proposed"
+          name={draft.proposed_plan.name}
+          steps={draft.proposed_plan.steps.map((step, index) => ({
+            ...step,
+            id: step.source_step_id ?? `new-${index}`,
+            position: index + 1,
+          }))}
+          useWhen={draft.proposed_plan.use_when}
+        />
+      </div>
+    </section>
+  )
+}
+
+interface DisplayStep {
+  readonly id: string
+  readonly position: number
+  readonly title: string
+  readonly description: string
+  readonly source_step_id?: string | null
+}
+
+function PlanPanel({
+  changes,
+  kind,
+  name,
+  steps,
+  useWhen,
+  version,
+}: {
+  readonly changes: readonly ProposalChange[]
+  readonly kind: "source" | "proposed"
+  readonly name: string
+  readonly steps: readonly DisplayStep[]
+  readonly useWhen: string
+  readonly version?: number
+}) {
+  const planDetailsChanged = changes.some((change) => change.type === "update_plan_details")
+
+  return (
+    <article className={`overflow-hidden rounded-xl border bg-card ${kind === "proposed" ? "border-primary/30" : ""}`}>
+      <header className="border-b p-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className={`text-sm font-semibold ${kind === "proposed" ? "text-primary" : "text-muted-foreground"}`}>
+            {kind === "source" ? "Current plan" : "Proposed plan"}
+          </p>
+          {version ? (
+            <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-semibold text-muted-foreground">
+              Version {version}
+            </span>
+          ) : null}
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <h3 className="text-xl font-semibold tracking-tight">{name}</h3>
+          {kind === "proposed" && planDetailsChanged ? <ChangeBadge label="Updated" /> : null}
+        </div>
+        <div className="mt-5 rounded-lg bg-muted/50 p-4">
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Use when</p>
+          <p className="mt-2 text-sm leading-6">{useWhen}</p>
+        </div>
+      </header>
+      <ol className="divide-y px-6">
+        {steps.map((step) => {
+          const labels = stepChangeLabels(step, changes, kind)
+
+          return (
+            <li className="grid gap-3 py-5 sm:grid-cols-[2.25rem_minmax(0,1fr)]" key={step.id}>
+              <span className="grid size-8 place-items-center rounded-full border bg-background text-xs font-semibold text-primary">
+                {step.position}
+              </span>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h4 className="text-sm font-semibold leading-5">{step.title}</h4>
+                  {labels.map((label) => <ChangeBadge key={label} label={label} />)}
+                </div>
+                <p className="mt-2 text-xs leading-5 text-muted-foreground">{step.description}</p>
+              </div>
+            </li>
+          )
+        })}
+      </ol>
+    </article>
+  )
+}
+
+function stepChangeLabels(
+  step: DisplayStep,
+  changes: readonly ProposalChange[],
+  kind: "source" | "proposed",
+): readonly string[] {
+  if (kind === "proposed" && step.source_step_id === null) return ["Added"]
+
+  const sourceStepId = kind === "source" ? step.id : step.source_step_id
+  if (sourceStepId === null || sourceStepId === undefined) return []
+
+  return changes.flatMap((change) => {
+    if (!("source_step_id" in change) || change.source_step_id !== sourceStepId) return []
+
+    switch (change.type) {
+      case "update_step": return ["Updated"]
+      case "move_step": return ["Moved"]
+      case "remove_step": return kind === "source" ? ["Removed"] : []
+      default: return []
+    }
+  })
+}
+
+function ChangeBadge({ label }: { readonly label: string }) {
+  return (
+    <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[0.7rem] font-semibold text-primary">
+      {label}
+    </span>
+  )
+}
+
+function Changes({
+  changes,
+  evidenceById,
+  incidentById,
+  proposal,
+}: {
+  readonly changes: readonly ProposalChange[]
+  readonly evidenceById: ReadonlyMap<string, ActionRecord>
+  readonly incidentById: ReadonlyMap<string, ReviewProposal["contributing_incidents"][number]>
+  readonly proposal: ReviewProposal
+}) {
+  return (
+    <section className="rounded-xl border bg-card p-6 sm:p-8" aria-labelledby="changes-heading">
+      <div className="flex flex-wrap items-baseline justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-primary">Review draft</p>
+          <h2 className="mt-1 text-2xl font-semibold tracking-tight" id="changes-heading">
+            Proposed changes
+          </h2>
+        </div>
+        <span className="text-sm text-muted-foreground">
+          {changes.length} {changes.length === 1 ? "change" : "changes"}
+        </span>
+      </div>
+
+      {changes.length === 0 ? (
+        <div className="mt-6 rounded-lg bg-muted/50 p-5">
+          <div className="flex items-center gap-2">
+            <CheckCircleIcon aria-hidden="true" className="text-primary" size={18} />
+            <p className="font-semibold">No plan changes recommended</p>
+          </div>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">
+            The proposed plan matches the source plan.
+          </p>
+        </div>
+      ) : (
+        <ol className="mt-6 space-y-4">
+          {changes.map((change, index) => {
+            const evidence = change.action_record_ids.flatMap((id) => {
+              const record = evidenceById.get(id)
+              return record === undefined ? [] : [record]
+            })
+
+            return (
+              <li className="rounded-lg border p-5" key={`${change.type}-${index}`}>
+                <div className="flex gap-3">
+                  <span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+                    {index + 1}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <h3 className="font-semibold leading-6">
+                      {changeTitle(change, proposal)}
+                    </h3>
+                    <p className="mt-2 text-sm leading-6 text-muted-foreground">{change.rationale}</p>
+
+                    {evidence.length > 0 ? (
+                      <div className="mt-4">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Cited evidence
+                        </p>
+                        <ul className="mt-2 space-y-2">
+                          {evidence.map((record) => {
+                            const incident = incidentById.get(record.incident_id)
+
+                            return (
+                              <li className="rounded-md bg-muted/50 p-3" key={record.id}>
+                                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                                  <span className="font-semibold">{recordTypeLabel(record.type)} · Action {record.sequence}</span>
+                                  {incident ? (
+                                    <AppLink className="font-semibold text-primary" href={`/incidents/${incident.id}`}>
+                                      {incident.title}
+                                    </AppLink>
+                                  ) : null}
+                                </div>
+                                {record.details ? (
+                                  <p className="mt-2 text-sm leading-6">{record.details}</p>
+                                ) : null}
+                                {record.reason ? (
+                                  <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                                    <span className="font-medium">Reason:</span> {record.reason}
+                                  </p>
+                                ) : null}
+                              </li>
+                            )
+                          })}
+                        </ul>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              </li>
+            )
+          })}
+        </ol>
+      )}
+    </section>
+  )
+}
+
+function changeTitle(change: ProposalChange, proposal: ReviewProposal): string {
+  const sourceStep = "source_step_id" in change
+    ? proposal.source_plan_version.steps.find((step) => step.id === change.source_step_id)
+    : undefined
+
+  switch (change.type) {
+    case "add_step": {
+      const step = proposal.draft?.proposed_plan.steps[change.proposed_step_position - 1]
+      return step ? `Add step ${change.proposed_step_position}: ${step.title}` : "Add a step"
+    }
+    case "update_step":
+      return `Update ${sourceStep?.title ?? "a plan step"}`
+    case "move_step":
+      return `Move ${sourceStep?.title ?? "a plan step"} to position ${change.proposed_step_position}`
+    case "remove_step":
+      return `Remove ${sourceStep?.title ?? "a plan step"}`
+    case "update_plan_details":
+      return `Update ${change.fields.map(planFieldLabel).join(" and ")}`
+  }
+}
+
+function planFieldLabel(field: "name" | "use_when"): string {
+  return field === "name" ? "plan name" : "usage guidance"
+}
+
+function recordTypeLabel(type: ActionRecord["type"]): string {
+  switch (type) {
+    case "step_completed": return "Step completed"
+    case "step_skipped": return "Step skipped"
+    case "step_modified": return "Step modified"
+    case "additional_action": return "Additional action"
+  }
+}
+
+function ContributingIncidents({ proposal }: { readonly proposal: ReviewProposal }) {
+  return (
+    <section className="rounded-xl border bg-card p-6 sm:p-8" aria-labelledby="incidents-heading">
+      <div className="flex flex-wrap items-baseline justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-primary">Incident context</p>
+          <h2 className="mt-1 text-2xl font-semibold tracking-tight" id="incidents-heading">
+            Contributing incidents
+          </h2>
+        </div>
+        <span className="text-sm text-muted-foreground">{proposal.contributing_incidents.length}</span>
+      </div>
+      <div className="mt-6 grid gap-3 md:grid-cols-2">
+        {proposal.contributing_incidents.map((incident) => (
+          <AppLink
+            className="group rounded-lg border p-5 transition-colors hover:border-primary/40 hover:bg-accent/20"
+            href={`/incidents/${incident.id}`}
+            key={incident.id}
+          >
+            <p className="text-xs text-muted-foreground">Closed {formatDateTime(incident.closed_at)}</p>
+            <h3 className="mt-2 font-semibold leading-6">{incident.title}</h3>
+            <p className="mt-2 line-clamp-2 text-sm leading-6 text-muted-foreground">
+              {incident.symptoms}
+            </p>
+            <span className="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold text-primary">
+              Open incident
+              <ArrowRightIcon aria-hidden="true" className="transition-transform group-hover:translate-x-0.5" size={15} weight="bold" />
+            </span>
+          </AppLink>
+        ))}
+      </div>
+    </section>
+  )
+}

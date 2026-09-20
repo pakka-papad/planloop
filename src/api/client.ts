@@ -15,7 +15,7 @@ export class ApiError extends Error {
   }
 }
 
-async function requestJson<T>(path: string, init: RequestInit): Promise<T> {
+async function request(path: string, init: RequestInit): Promise<Response> {
   const response = await fetch(path, init)
 
   if (!response.ok) {
@@ -30,7 +30,26 @@ async function requestJson<T>(path: string, init: RequestInit): Promise<T> {
     throw new ApiError(response.status, problem)
   }
 
-  return response.json() as Promise<T>
+  return response
+}
+
+async function requestJson<T>(path: string, init: RequestInit): Promise<T> {
+  return (await request(path, init)).json() as Promise<T>
+}
+
+export async function requestJsonWithEtag<T>(
+  path: string,
+  init: RequestInit,
+): Promise<{ readonly data: T; readonly etag: string }> {
+  const response = await request(path, init)
+  const etag = response.headers.get("etag")
+
+  if (etag === null) throw new Error("The server returned no resource version.")
+
+  return {
+    data: await response.json() as T,
+    etag,
+  }
 }
 
 export function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
