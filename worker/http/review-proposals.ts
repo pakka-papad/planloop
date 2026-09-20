@@ -1,8 +1,20 @@
+import * as v from "valibot"
+
 import type {
   ProposalChange,
   ProposalDraft,
   ReviewProposal,
+  ReviewProposalStatus,
+  ReviewProposalSummary,
 } from "../domain/review-proposal"
+import {
+  listReviewProposals,
+  ListReviewProposalsCursorSchema,
+  type ListReviewProposalsCursor,
+} from "../application/review-proposals"
+import { cursorParser, encodeCursor } from "./cursors"
+import { validationProblem } from "./problems"
+import { PageLimitSchema, parseQueryParam, schemaParser } from "./query-params"
 import { toPlanVersionDto, type PlanVersionDto } from "./action-plans"
 import { toActionRecordDto, type ActionRecordDto } from "./incidents"
 
@@ -87,11 +99,136 @@ export interface ReviewProposalDto {
   readonly created_plan_version: PlanVersionDto | null
 }
 
+export interface ReviewProposalSummaryDto {
+  readonly id: string
+  readonly plan_id: string
+  readonly source_plan_version: Omit<PlanVersionDto, "steps">
+  readonly status: ReviewProposalStatusDto
+  readonly failure_reason: string | null
+  readonly revision: number
+  readonly draft: {
+    readonly summary: string
+    readonly proposed_plan: {
+      readonly name: string
+      readonly use_when: string
+    }
+  } | null
+  readonly created_at: string
+  readonly updated_at: string
+  readonly decided_at: string | null
+  readonly decided_by: string | null
+  readonly decision_comment: string | null
+  readonly created_plan_version: Omit<PlanVersionDto, "steps"> | null
+}
+
 export type ReplaceProposalDraftRequest = ProposalDraftDto
 
 export interface DecideProposalRequest {
   readonly decision: "approved" | "rejected"
   readonly comment?: string
+}
+
+function toPlanVersionSummaryDto(
+  version: ReviewProposalSummary["sourcePlanVersion"],
+): Omit<PlanVersionDto, "steps"> {
+  return {
+    id: version.id,
+    plan_id: version.planId,
+    version: version.version,
+    name: version.name,
+    use_when: version.useWhen,
+    approved_at: version.approvedAt,
+    approved_by: version.approvedBy,
+  }
+}
+
+function toReviewProposalSummaryDto(
+  proposal: ReviewProposalSummary,
+): ReviewProposalSummaryDto {
+  return {
+    id: proposal.id,
+    plan_id: proposal.planId,
+    source_plan_version: toPlanVersionSummaryDto(proposal.sourcePlanVersion),
+    status: proposal.status,
+    failure_reason: proposal.failureReason,
+    revision: proposal.revision,
+    draft:
+      proposal.draft === null
+        ? null
+        : {
+            summary: proposal.draft.summary,
+            proposed_plan: {
+              name: proposal.draft.proposedPlan.name,
+              use_when: proposal.draft.proposedPlan.useWhen,
+            },
+          },
+    created_at: proposal.createdAt,
+    updated_at: proposal.updatedAt,
+    decided_at: proposal.decidedAt,
+    decided_by: proposal.decidedBy,
+    decision_comment: proposal.decisionComment,
+    created_plan_version:
+      proposal.createdPlanVersion === null
+        ? null
+        : toPlanVersionSummaryDto(proposal.createdPlanVersion),
+  }
+}
+
+export async function handleListReviewProposals(
+  request: Request,
+  database: D1Database,
+): Promise<Response> {
+  const searchParams = new URL(request.url).searchParams
+  const status = parseQueryParam<ReviewProposalStatus | null>(
+    searchParams,
+    "status",
+    null,
+    schemaParser(
+      v.picklist([
+        "updating",
+        "pending_review",
+        "failed",
+        "no_change",
+        "approved",
+        "rejected",
+      ]),
+    ),
+    "Must be updating, pending_review, failed, no_change, approved, or rejected.",
+  )
+
+  if (!status.ok) return validationProblem([status.error])
+
+  const limit = parseQueryParam(
+    searchParams,
+    "limit",
+    25,
+    schemaParser(PageLimitSchema),
+    "Must be a single integer between 1 and 100.",
+  )
+
+  if (!limit.ok) return validationProblem([limit.error])
+
+  const cursor = parseQueryParam<ListReviewProposalsCursor | null>(
+    searchParams,
+    "cursor",
+    null,
+    cursorParser(ListReviewProposalsCursorSchema),
+    "Must be a cursor returned by this endpoint.",
+  )
+
+  if (!cursor.ok) return validationProblem([cursor.error])
+
+  const page = await listReviewProposals(
+    database,
+    status.value,
+    limit.value,
+    cursor.value,
+  )
+
+  return Response.json({
+    items: page.items.map(toReviewProposalSummaryDto),
+    next_cursor: page.nextCursor === null ? null : encodeCursor(page.nextCursor),
+  })
 }
 
 function toProposalChangeDto(change: ProposalChange): ProposalChangeDto {

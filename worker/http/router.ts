@@ -13,6 +13,7 @@ import {
   handleListIncidents,
 } from "./incidents"
 import { notFound } from "./problems"
+import { handleListReviewProposals } from "./review-proposals"
 
 type RouteHandler = (
   request: Request,
@@ -87,6 +88,11 @@ const routes: readonly Route[] = [
           ),
         match.pathname.groups.incidentId,
       ),
+  },
+  {
+    method: "GET",
+    pattern: new URLPattern({ pathname: "/api/v1/review-proposals" }),
+    handle: (request, env) => handleListReviewProposals(request, env.DB),
   },
 ]
 

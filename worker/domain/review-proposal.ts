@@ -1,5 +1,6 @@
 import type { PlanVersion } from "./action-plan"
 import type { ActionRecord } from "./incident"
+import type { UtcTimestamp, Uuid } from "./scalars"
 
 export interface ProposedPlanStep {
   readonly sourceStepId: string | null
@@ -80,4 +81,26 @@ export interface ReviewProposal {
   readonly decidedBy: string | null
   readonly decisionComment: string | null
   readonly createdPlanVersion: PlanVersion | null
+}
+
+export interface ReviewProposalSummary {
+  readonly id: Uuid
+  readonly planId: Uuid
+  readonly sourcePlanVersion: Omit<PlanVersion, "steps">
+  readonly status: ReviewProposalStatus
+  readonly failureReason: string | null
+  readonly revision: number
+  readonly draft: {
+    readonly summary: string
+    readonly proposedPlan: {
+      readonly name: string
+      readonly useWhen: string
+    }
+  } | null
+  readonly createdAt: UtcTimestamp
+  readonly updatedAt: UtcTimestamp
+  readonly decidedAt: UtcTimestamp | null
+  readonly decidedBy: string | null
+  readonly decisionComment: string | null
+  readonly createdPlanVersion: Omit<PlanVersion, "steps"> | null
 }

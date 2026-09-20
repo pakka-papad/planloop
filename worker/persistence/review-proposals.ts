@@ -6,9 +6,15 @@ import type {
   ProposalDraft,
   ProposedPlanStep,
   ReviewProposal,
+  ReviewProposalSummary,
   ReviewProposalStatus,
 } from "../domain/review-proposal"
-import type { Uuid } from "../domain/scalars"
+import {
+  UtcTimestampSchema,
+  UuidSchema,
+  type Uuid,
+} from "../domain/scalars"
+import * as v from "valibot"
 
 export interface ReviewProposalRow {
   id: string
@@ -52,6 +58,19 @@ export interface ReviewProposalChangeEvidenceRow {
   action_record_id: string
 }
 
+interface ReviewProposalSummaryRow extends ReviewProposalRow {
+  source_version: number
+  source_name: string
+  source_use_when: string
+  source_approved_at: string
+  source_approved_by: string | null
+  created_version: number | null
+  created_name: string | null
+  created_use_when: string | null
+  created_approved_at: string | null
+  created_approved_by: string | null
+}
+
 function toReviewProposalStatus(value: string): ReviewProposalStatus {
   switch (value) {
     case "updating":
@@ -83,6 +102,140 @@ export async function findProposalWorkflowTarget(
   return row === null
     ? null
     : { status: toReviewProposalStatus(row.status), revision: row.revision }
+}
+
+function toVersionSummary(
+  row: ReviewProposalSummaryRow,
+  kind: "source" | "created",
+): Omit<PlanVersion, "steps"> | null {
+  const id = kind === "source" ? row.source_plan_version_id : row.created_plan_version_id
+  const version = kind === "source" ? row.source_version : row.created_version
+  const name = kind === "source" ? row.source_name : row.created_name
+  const useWhen = kind === "source" ? row.source_use_when : row.created_use_when
+  const approvedAt = kind === "source" ? row.source_approved_at : row.created_approved_at
+  const approvedBy = kind === "source" ? row.source_approved_by : row.created_approved_by
+
+  if (
+    id === null ||
+    version === null ||
+    name === null ||
+    useWhen === null ||
+    approvedAt === null
+  ) {
+    if (kind === "created" && id === null) return null
+    throw new Error(`Proposal ${row.id} has an incomplete ${kind} plan version`)
+  }
+
+  return {
+    id: v.parse(UuidSchema, id),
+    planId: v.parse(UuidSchema, row.plan_id),
+    version,
+    name,
+    useWhen,
+    approvedAt: v.parse(UtcTimestampSchema, approvedAt),
+    approvedBy,
+  }
+}
+
+function toReviewProposalSummary(row: ReviewProposalSummaryRow): ReviewProposalSummary {
+  const sourcePlanVersion = toVersionSummary(row, "source")
+
+  if (sourcePlanVersion === null) {
+    throw new Error(`Proposal ${row.id} has no source plan version`)
+  }
+
+  const draftFields = [row.summary, row.proposed_name, row.proposed_use_when]
+  const hasDraft = draftFields.some((field) => field !== null)
+
+  if (hasDraft && draftFields.some((field) => field === null)) {
+    throw new Error(`Proposal ${row.id} has an incomplete draft`)
+  }
+
+  return {
+    id: v.parse(UuidSchema, row.id),
+    planId: v.parse(UuidSchema, row.plan_id),
+    sourcePlanVersion,
+    status: toReviewProposalStatus(row.status),
+    failureReason: row.failure_reason,
+    revision: row.revision,
+    draft:
+      row.summary === null || row.proposed_name === null || row.proposed_use_when === null
+        ? null
+        : {
+            summary: row.summary,
+            proposedPlan: {
+              name: row.proposed_name,
+              useWhen: row.proposed_use_when,
+            },
+          },
+    createdAt: v.parse(UtcTimestampSchema, row.created_at),
+    updatedAt: v.parse(UtcTimestampSchema, row.updated_at),
+    decidedAt:
+      row.decided_at === null ? null : v.parse(UtcTimestampSchema, row.decided_at),
+    decidedBy: row.decided_by,
+    decisionComment: row.decision_comment,
+    createdPlanVersion: toVersionSummary(row, "created"),
+  }
+}
+
+export async function findReviewProposals(
+  database: D1Database,
+  status: ReviewProposalStatus | null,
+  limit: number,
+  cursor: { readonly createdAt: string; readonly id: string } | null,
+): Promise<readonly ReviewProposalSummary[]> {
+  const statusClause =
+    status === null
+      ? "p.status IN ('updating', 'pending_review', 'failed')"
+      : "p.status = ?"
+  const cursorClause =
+    cursor === null
+      ? ""
+      : "AND (p.created_at > ? OR (p.created_at = ? AND p.id > ?))"
+  const statement = database.prepare(
+    `SELECT
+       p.id,
+       p.plan_id,
+       p.source_plan_version_id,
+       p.status,
+       p.failure_reason,
+       p.revision,
+       p.summary,
+       p.proposed_name,
+       p.proposed_use_when,
+       p.created_at,
+       p.updated_at,
+       p.decided_at,
+       p.decided_by,
+       p.decision_comment,
+       p.created_plan_version_id,
+       source.version AS source_version,
+       source.name AS source_name,
+       source.use_when AS source_use_when,
+       source.approved_at AS source_approved_at,
+       source.approved_by AS source_approved_by,
+       created.version AS created_version,
+       created.name AS created_name,
+       created.use_when AS created_use_when,
+       created.approved_at AS created_approved_at,
+       created.approved_by AS created_approved_by
+     FROM review_proposals p
+     JOIN action_plan_versions source ON source.id = p.source_plan_version_id
+     LEFT JOIN action_plan_versions created ON created.id = p.created_plan_version_id
+     WHERE ${statusClause} ${cursorClause}
+     ORDER BY p.created_at ASC, p.id ASC
+     LIMIT ?`,
+  )
+  const bindings: unknown[] = status === null ? [] : [status]
+
+  if (cursor !== null) {
+    bindings.push(cursor.createdAt, cursor.createdAt, cursor.id)
+  }
+
+  bindings.push(limit)
+  const { results } = await statement.bind(...bindings).all<ReviewProposalSummaryRow>()
+
+  return results.map(toReviewProposalSummary)
 }
 
 function requiredId(value: string | null, field: string): string {
