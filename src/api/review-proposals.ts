@@ -153,3 +153,22 @@ export function retryReviewProposalGeneration(
     },
   ).then(({ data, etag: nextEtag }) => ({ proposal: data, etag: nextEtag }))
 }
+
+export function updateReviewProposalDraft(
+  id: string,
+  etag: string,
+  draft: ProposalDraft,
+): Promise<VersionedReviewProposal> {
+  return requestJsonWithEtag<ReviewProposal>(
+    `/api/v1/review-proposals/${encodeURIComponent(id)}/draft`,
+    {
+      method: "PUT",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json",
+        "if-match": etag,
+      },
+      body: JSON.stringify(draft),
+    },
+  ).then(({ data, etag: nextEtag }) => ({ proposal: data, etag: nextEtag }))
+}

@@ -18,6 +18,7 @@ import {
 } from "../api/review-proposals"
 import { formatDateTime } from "../format"
 import { AppLink } from "../navigation"
+import { ReviewProposalEditor } from "./ReviewProposalEditor"
 
 const statusPresentation: Record<ReviewProposalStatus, {
   readonly label: string
@@ -176,7 +177,9 @@ export function ReviewProposalPage({ proposalId }: { readonly proposalId: string
 
       {resource && !isLoading ? (
         <ProposalView
+          etag={resource.etag}
           isRetrying={isRetrying}
+          onProposalUpdated={setResource}
           onRetryGeneration={() => void retryGeneration()}
           proposal={resource.proposal}
           retryError={retryError}
@@ -187,12 +190,16 @@ export function ReviewProposalPage({ proposalId }: { readonly proposalId: string
 }
 
 function ProposalView({
+  etag,
   isRetrying,
+  onProposalUpdated,
   onRetryGeneration,
   proposal,
   retryError,
 }: {
+  readonly etag: string
   readonly isRetrying: boolean
+  readonly onProposalUpdated: (resource: VersionedReviewProposal) => void
   readonly onRetryGeneration: () => void
   readonly proposal: ReviewProposal
   readonly retryError: string | null
@@ -291,7 +298,12 @@ function ProposalView({
 
       {proposal.draft ? (
         <>
-          <PlanComparison proposal={proposal} />
+          <ReviewProposalEditor
+            etag={etag}
+            key={proposal.revision}
+            onSaved={onProposalUpdated}
+            proposal={proposal}
+          />
           <Changes
             changes={proposal.draft.changes}
             evidenceById={evidenceById}
@@ -310,144 +322,6 @@ function ProposalView({
 
       <ContributingIncidents proposal={proposal} />
     </div>
-  )
-}
-
-function PlanComparison({ proposal }: { readonly proposal: ReviewProposal }) {
-  const draft = proposal.draft
-  if (draft === null) return null
-
-  return (
-    <section aria-labelledby="plan-comparison-heading">
-      <div className="mb-4">
-        <p className="text-sm font-semibold text-primary">Plan comparison</p>
-        <h2 className="mt-1 text-2xl font-semibold tracking-tight" id="plan-comparison-heading">
-          Current and proposed guidance
-        </h2>
-      </div>
-      <div className="grid gap-6 lg:grid-cols-2 lg:items-start">
-        <PlanPanel
-          changes={draft.changes}
-          kind="source"
-          name={proposal.source_plan_version.name}
-          steps={proposal.source_plan_version.steps}
-          useWhen={proposal.source_plan_version.use_when}
-          version={proposal.source_plan_version.version}
-        />
-        <PlanPanel
-          changes={draft.changes}
-          kind="proposed"
-          name={draft.proposed_plan.name}
-          steps={draft.proposed_plan.steps.map((step, index) => ({
-            ...step,
-            id: step.source_step_id ?? `new-${index}`,
-            position: index + 1,
-          }))}
-          useWhen={draft.proposed_plan.use_when}
-        />
-      </div>
-    </section>
-  )
-}
-
-interface DisplayStep {
-  readonly id: string
-  readonly position: number
-  readonly title: string
-  readonly description: string
-  readonly source_step_id?: string | null
-}
-
-function PlanPanel({
-  changes,
-  kind,
-  name,
-  steps,
-  useWhen,
-  version,
-}: {
-  readonly changes: readonly ProposalChange[]
-  readonly kind: "source" | "proposed"
-  readonly name: string
-  readonly steps: readonly DisplayStep[]
-  readonly useWhen: string
-  readonly version?: number
-}) {
-  const planDetailsChanged = changes.some((change) => change.type === "update_plan_details")
-
-  return (
-    <article className={`overflow-hidden rounded-xl border bg-card ${kind === "proposed" ? "border-primary/30" : ""}`}>
-      <header className="border-b p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className={`text-sm font-semibold ${kind === "proposed" ? "text-primary" : "text-muted-foreground"}`}>
-            {kind === "source" ? "Current plan" : "Proposed plan"}
-          </p>
-          {version ? (
-            <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-semibold text-muted-foreground">
-              Version {version}
-            </span>
-          ) : null}
-        </div>
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <h3 className="text-xl font-semibold tracking-tight">{name}</h3>
-          {kind === "proposed" && planDetailsChanged ? <ChangeBadge label="Updated" /> : null}
-        </div>
-        <div className="mt-5 rounded-lg bg-muted/50 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Use when</p>
-          <p className="mt-2 text-sm leading-6">{useWhen}</p>
-        </div>
-      </header>
-      <ol className="divide-y px-6">
-        {steps.map((step) => {
-          const labels = stepChangeLabels(step, changes, kind)
-
-          return (
-            <li className="grid gap-3 py-5 sm:grid-cols-[2.25rem_minmax(0,1fr)]" key={step.id}>
-              <span className="grid size-8 place-items-center rounded-full border bg-background text-xs font-semibold text-primary">
-                {step.position}
-              </span>
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h4 className="text-sm font-semibold leading-5">{step.title}</h4>
-                  {labels.map((label) => <ChangeBadge key={label} label={label} />)}
-                </div>
-                <p className="mt-2 text-xs leading-5 text-muted-foreground">{step.description}</p>
-              </div>
-            </li>
-          )
-        })}
-      </ol>
-    </article>
-  )
-}
-
-function stepChangeLabels(
-  step: DisplayStep,
-  changes: readonly ProposalChange[],
-  kind: "source" | "proposed",
-): readonly string[] {
-  if (kind === "proposed" && step.source_step_id === null) return ["Added"]
-
-  const sourceStepId = kind === "source" ? step.id : step.source_step_id
-  if (sourceStepId === null || sourceStepId === undefined) return []
-
-  return changes.flatMap((change) => {
-    if (!("source_step_id" in change) || change.source_step_id !== sourceStepId) return []
-
-    switch (change.type) {
-      case "update_step": return ["Updated"]
-      case "move_step": return ["Moved"]
-      case "remove_step": return kind === "source" ? ["Removed"] : []
-      default: return []
-    }
-  })
-}
-
-function ChangeBadge({ label }: { readonly label: string }) {
-  return (
-    <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[0.7rem] font-semibold text-primary">
-      {label}
-    </span>
   )
 }
 
