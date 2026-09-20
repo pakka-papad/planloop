@@ -99,6 +99,19 @@ async function seedReviewProposals(database: D1Database): Promise<void> {
         "Classify processor responses",
         "Separate issuer declines from processor, routing, or integration failures.",
       ),
+    database
+      .prepare(
+        `INSERT INTO action_plan_steps
+           (id, plan_version_id, position, title, description)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        "0199d200-0003-4000-8000-000000000003",
+        VERSION_IDS[2],
+        1,
+        "Confirm lag scope",
+        "Measure lag by consumer group, topic, partition, and production region.",
+      ),
   )
 
   const insertProposal = (
@@ -456,6 +469,110 @@ test.each([
   const response = await server.fetch(`/api/v1/review-proposals/${proposalId}`)
 
   expect(response.status).toBe(404)
+})
+
+test("retries failed generation once for concurrent requests with the same ETag", async () => {
+  const path = `/api/v1/review-proposals/${PROPOSALS.failed}/generation-attempts`
+  const request = () =>
+    server.fetch(path, {
+      method: "POST",
+      headers: { "if-match": `"${PROPOSALS.failed}:2"` },
+    })
+  const responses = await Promise.all([request(), request()])
+
+  expect(responses.map((response) => response.status).sort()).toEqual([202, 412])
+
+  const accepted = responses.find((response) => response.status === 202)
+
+  expect(accepted).toBeDefined()
+  expect(accepted?.headers.get("etag")).toBe(`"${PROPOSALS.failed}:3"`)
+  expect(await accepted?.json()).toMatchObject({
+    id: PROPOSALS.failed,
+    status: "updating",
+    failure_reason: null,
+    revision: 3,
+  })
+
+  const env = await worker.getEnv()
+  const auditEvents = await env.DB.prepare(
+    `SELECT event_type, entity_type, entity_id, details_json
+     FROM audit_events
+     WHERE entity_id = ?`,
+  )
+    .bind(PROPOSALS.failed)
+    .all<{
+      event_type: string
+      entity_type: string
+      entity_id: string
+      details_json: string
+    }>()
+
+  expect(auditEvents.results).toHaveLength(1)
+  expect(auditEvents.results[0]).toMatchObject({
+    event_type: "review_proposal_generation_retried",
+    entity_type: "review_proposal",
+    entity_id: PROPOSALS.failed,
+  })
+  expect(JSON.parse(auditEvents.results[0]?.details_json ?? "null")).toEqual({
+    failure_reason: "Proposal generation did not complete. Try again.",
+    revision: 2,
+  })
+})
+
+test("restarts updating generation without changing the revision", async () => {
+  const path = `/api/v1/review-proposals/${PROPOSALS.updating}/generation-attempts`
+  const options = {
+    method: "POST",
+    headers: { "if-match": `"${PROPOSALS.updating}:2"` },
+  }
+  const firstResponse = await server.fetch(path, options)
+  const secondResponse = await server.fetch(path, options)
+
+  expect(firstResponse.status).toBe(202)
+  expect(secondResponse.status).toBe(202)
+  expect(firstResponse.headers.get("etag")).toBe(`"${PROPOSALS.updating}:2"`)
+  expect(secondResponse.headers.get("etag")).toBe(`"${PROPOSALS.updating}:2"`)
+})
+
+test.each([
+  {
+    name: "missing If-Match",
+    proposalId: PROPOSALS.failed,
+    headers: undefined,
+    status: 428,
+    code: "proposal_revision_required",
+  },
+  {
+    name: "stale revision",
+    proposalId: PROPOSALS.failed,
+    headers: { "if-match": `"${PROPOSALS.failed}:1"` },
+    status: 412,
+    code: "proposal_revision_stale",
+  },
+  {
+    name: "non-retryable proposal",
+    proposalId: PROPOSALS.pending,
+    headers: { "if-match": `"${PROPOSALS.pending}:2"` },
+    status: 409,
+    code: "proposal_not_retryable",
+  },
+  {
+    name: "unknown proposal",
+    proposalId: "0199d300-9999-4000-8000-000000000999",
+    headers: {
+      "if-match": '"0199d300-9999-4000-8000-000000000999:1"',
+    },
+    status: 404,
+    code: "not_found",
+  },
+])("rejects a generation attempt with $name", async ({ proposalId, headers, status, code }) => {
+  const response = await server.fetch(
+    `/api/v1/review-proposals/${proposalId}/generation-attempts`,
+    { method: "POST", headers },
+  )
+
+  expect(response.status).toBe(status)
+  expect(await response.json()).toMatchObject({ code })
 })
 
 test("filters by one status", async () => {

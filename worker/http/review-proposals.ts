@@ -11,11 +11,13 @@ import {
   getReviewProposal,
   listReviewProposals,
   ListReviewProposalsCursorSchema,
+  startProposalGenerationAttempt,
   type ListReviewProposalsCursor,
 } from "../application/review-proposals"
+import type { StartReviewProposalGeneration } from "../application/review-proposal-generation"
 import { UuidSchema } from "../domain/scalars"
 import { cursorParser, encodeCursor } from "./cursors"
-import { notFound, validationProblem } from "./problems"
+import { notFound, problem, validationProblem } from "./problems"
 import { PageLimitSchema, parseQueryParam, schemaParser } from "./query-params"
 import { toPlanVersionDto, type PlanVersionDto } from "./action-plans"
 import { toActionRecordDto, type ActionRecordDto } from "./incidents"
@@ -250,8 +252,106 @@ export async function handleGetReviewProposal(
   }
 
   return Response.json(toReviewProposalDto(proposal), {
-    headers: { etag: `"${proposal.id}:${proposal.revision}"` },
+    headers: { etag: reviewProposalEtag(proposal.id, proposal.revision) },
   })
+}
+
+function reviewProposalEtag(proposalId: string, revision: number): string {
+  return `"${proposalId}:${revision}"`
+}
+
+function revisionFromEtag(etag: string, proposalId: string): number | null {
+  const prefix = `"${proposalId}:`
+
+  if (!etag.startsWith(prefix) || !etag.endsWith('"')) return null
+
+  const revisionText = etag.slice(prefix.length, -1)
+
+  if (!/^[1-9]\d*$/.test(revisionText)) return null
+
+  const revision = Number(revisionText)
+
+  return Number.isSafeInteger(revision) ? revision : null
+}
+
+export async function handleStartProposalGenerationAttempt(
+  request: Request,
+  database: D1Database,
+  startReviewProposalGeneration: StartReviewProposalGeneration,
+  proposalId: string,
+): Promise<Response> {
+  const parsedProposalId = v.safeParse(UuidSchema, proposalId)
+
+  if (!parsedProposalId.success) {
+    return notFound("The requested review proposal does not exist.")
+  }
+
+  const etag = request.headers.get("if-match")
+
+  if (etag === null) {
+    return problem({
+      type: "urn:planloop:problem:proposal-revision-required",
+      title: "Proposal revision required",
+      status: 428,
+      detail: "If-Match must contain the review proposal's current ETag.",
+      code: "proposal_revision_required",
+    })
+  }
+
+  const expectedRevision = revisionFromEtag(etag, parsedProposalId.output)
+
+  if (expectedRevision === null) {
+    return problem({
+      type: "urn:planloop:problem:proposal-revision-stale",
+      title: "Proposal revision stale",
+      status: 412,
+      detail: "If-Match does not contain the review proposal's current ETag.",
+      code: "proposal_revision_stale",
+    })
+  }
+
+  const result = await startProposalGenerationAttempt(
+    database,
+    startReviewProposalGeneration,
+    parsedProposalId.output,
+    expectedRevision,
+  )
+
+  switch (result.status) {
+    case "proposal_not_found":
+      return notFound("The requested review proposal does not exist.")
+    case "revision_stale":
+      return problem({
+        type: "urn:planloop:problem:proposal-revision-stale",
+        title: "Proposal revision stale",
+        status: 412,
+        detail: "The review proposal changed after it was retrieved.",
+        code: "proposal_revision_stale",
+      })
+    case "proposal_not_retryable":
+      return problem({
+        type: "urn:planloop:problem:proposal-not-retryable",
+        title: "Proposal not retryable",
+        status: 409,
+        detail: "Generation can be started only for an updating or failed proposal.",
+        code: "proposal_not_retryable",
+      })
+    case "workflow_unavailable":
+      return problem({
+        type: "urn:planloop:problem:workflow-unavailable",
+        title: "Workflow unavailable",
+        status: 503,
+        detail: "The proposal state was updated, but generation could not start.",
+        code: "workflow_unavailable",
+      })
+    case "accepted":
+      return Response.json(toReviewProposalDto(result.proposal), {
+        status: 202,
+        headers: {
+          etag: reviewProposalEtag(result.proposal.id, result.proposal.revision),
+        },
+      })
+  }
 }
 
 function toProposalChangeDto(change: ProposalChange): ProposalChangeDto {

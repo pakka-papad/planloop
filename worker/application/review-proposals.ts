@@ -5,11 +5,20 @@ import type {
   ReviewProposalStatus,
   ReviewProposalSummary,
 } from "../domain/review-proposal"
-import { UtcTimestampSchema, UuidSchema, type Uuid } from "../domain/scalars"
 import {
+  currentUtcTimestamp,
+  generateUuid,
+  UtcTimestampSchema,
+  UuidSchema,
+  type Uuid,
+} from "../domain/scalars"
+import {
+  beginProposalGenerationAttempt,
   findReviewProposalById,
+  findProposalWorkflowTarget,
   findReviewProposals,
 } from "../persistence/review-proposals"
+import type { StartReviewProposalGeneration } from "./review-proposal-generation"
 
 export const ListReviewProposalsCursorSchema = v.strictObject({
   createdAt: UtcTimestampSchema,
@@ -49,4 +58,53 @@ export function getReviewProposal(
   proposalId: Uuid,
 ): Promise<ReviewProposal | null> {
   return findReviewProposalById(database, proposalId)
+}
+
+export type StartProposalGenerationAttemptResult =
+  | { readonly status: "accepted"; readonly proposal: ReviewProposal }
+  | { readonly status: "proposal_not_found" }
+  | { readonly status: "revision_stale" }
+  | { readonly status: "proposal_not_retryable" }
+  | { readonly status: "workflow_unavailable" }
+
+export async function startProposalGenerationAttempt(
+  database: D1Database,
+  startReviewProposalGeneration: StartReviewProposalGeneration,
+  proposalId: Uuid,
+  expectedRevision: number,
+): Promise<StartProposalGenerationAttemptResult> {
+  const revision = await beginProposalGenerationAttempt(
+    database,
+    proposalId,
+    expectedRevision,
+    generateUuid(),
+    currentUtcTimestamp(),
+  )
+
+  if (revision === null) {
+    const target = await findProposalWorkflowTarget(database, proposalId)
+
+    if (target === null) return { status: "proposal_not_found" }
+    if (target.revision !== expectedRevision) return { status: "revision_stale" }
+    if (target.status !== "failed" && target.status !== "updating") {
+      return { status: "proposal_not_retryable" }
+    }
+
+    throw new Error(`Failed to start generation attempt for proposal ${proposalId}`)
+  }
+
+  const workflowStarted = await startReviewProposalGeneration({
+    proposalId,
+    revision,
+  })
+
+  if (!workflowStarted) return { status: "workflow_unavailable" }
+
+  const proposal = await findReviewProposalById(database, proposalId)
+
+  if (proposal === null) {
+    throw new Error(`Proposal ${proposalId} disappeared after starting generation`)
+  }
+
+  return { status: "accepted", proposal }
 }

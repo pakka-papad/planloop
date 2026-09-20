@@ -16,6 +16,7 @@ import { notFound } from "./problems"
 import {
   handleGetReviewProposal,
   handleListReviewProposals,
+  handleStartProposalGenerationAttempt,
 } from "./review-proposals"
 
 type RouteHandler = (
@@ -102,6 +103,23 @@ const routes: readonly Route[] = [
     pattern: new URLPattern({ pathname: "/api/v1/review-proposals/:proposalId" }),
     handle: (_request, env, match) =>
       handleGetReviewProposal(env.DB, match.pathname.groups.proposalId),
+  },
+  {
+    method: "POST",
+    pattern: new URLPattern({
+      pathname: "/api/v1/review-proposals/:proposalId/generation-attempts",
+    }),
+    handle: (request, env, match) =>
+      handleStartProposalGenerationAttempt(
+        request,
+        env.DB,
+        (input) =>
+          startReviewProposalGeneration(
+            env.GENERATE_REVIEW_PROPOSAL_WORKFLOW,
+            input,
+          ),
+        match.pathname.groups.proposalId,
+      ),
   },
 ]
 

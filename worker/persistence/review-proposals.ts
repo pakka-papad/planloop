@@ -14,6 +14,7 @@ import type {
 import {
   UtcTimestampSchema,
   UuidSchema,
+  type UtcTimestamp,
   type Uuid,
 } from "../domain/scalars"
 import { findActionPlanVersionById } from "./action-plans"
@@ -110,6 +111,45 @@ export async function findProposalWorkflowTarget(
   return row === null
     ? null
     : { status: toReviewProposalStatus(row.status), revision: row.revision }
+}
+
+export async function beginProposalGenerationAttempt(
+  database: D1Database,
+  proposalId: Uuid,
+  expectedRevision: number,
+  auditEventId: Uuid,
+  updatedAt: UtcTimestamp,
+): Promise<number | null> {
+  const auditFailure = database
+    .prepare(
+      `INSERT INTO audit_events
+         (id, actor_id, event_type, entity_type, entity_id, details_json, created_at)
+       SELECT ?, NULL, 'review_proposal_generation_retried',
+              'review_proposal', id,
+              json_object('failure_reason', failure_reason, 'revision', revision), ?
+       FROM review_proposals
+       WHERE id = ? AND revision = ? AND status = 'failed'`,
+    )
+    .bind(auditEventId, updatedAt, proposalId, expectedRevision)
+  const transition = database
+    .prepare(
+      `UPDATE review_proposals
+       SET status = 'updating',
+           failure_reason = CASE WHEN status = 'failed' THEN NULL ELSE failure_reason END,
+           revision = CASE WHEN status = 'failed' THEN revision + 1 ELSE revision END,
+           updated_at = CASE WHEN status = 'failed' THEN ? ELSE updated_at END
+       WHERE id = ?
+         AND revision = ?
+         AND status IN ('failed', 'updating')
+       RETURNING revision`,
+    )
+    .bind(updatedAt, proposalId, expectedRevision)
+  const results = await database.batch<{ revision: number }>([
+    auditFailure,
+    transition,
+  ])
+
+  return results[1]?.results[0]?.revision ?? null
 }
 
 function toVersionSummary(
