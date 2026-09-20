@@ -11,6 +11,7 @@ import {
   getReviewProposal,
   listReviewProposals,
   ListReviewProposalsCursorSchema,
+  replaceReviewProposalDraft,
   startProposalGenerationAttempt,
   type ListReviewProposalsCursor,
 } from "../application/review-proposals"
@@ -21,6 +22,8 @@ import { notFound, problem, validationProblem } from "./problems"
 import { PageLimitSchema, parseQueryParam, schemaParser } from "./query-params"
 import { toPlanVersionDto, type PlanVersionDto } from "./action-plans"
 import { toActionRecordDto, type ActionRecordDto } from "./incidents"
+import { ReplaceProposalDraftRequestSchema } from "./review-proposal-schemas"
+import { parseJsonBody } from "./validation"
 
 export interface ProposedPlanStepDto {
   readonly source_step_id: string | null
@@ -124,8 +127,6 @@ export interface ReviewProposalSummaryDto {
   readonly decision_comment: string | null
   readonly created_plan_version: Omit<PlanVersionDto, "steps"> | null
 }
-
-export type ReplaceProposalDraftRequest = ProposalDraftDto
 
 export interface DecideProposalRequest {
   readonly decision: "approved" | "rejected"
@@ -274,6 +275,47 @@ function revisionFromEtag(etag: string, proposalId: string): number | null {
   return Number.isSafeInteger(revision) ? revision : null
 }
 
+type ProposalRevisionResult =
+  | { readonly ok: true; readonly revision: number }
+  | { readonly ok: false; readonly response: Response }
+
+function proposalRevisionFromRequest(
+  request: Request,
+  proposalId: string,
+): ProposalRevisionResult {
+  const etag = request.headers.get("if-match")
+
+  if (etag === null) {
+    return {
+      ok: false,
+      response: problem({
+        type: "urn:planloop:problem:proposal-revision-required",
+        title: "Proposal revision required",
+        status: 428,
+        detail: "If-Match must contain the review proposal's current ETag.",
+        code: "proposal_revision_required",
+      }),
+    }
+  }
+
+  const revision = revisionFromEtag(etag, proposalId)
+
+  if (revision === null) {
+    return {
+      ok: false,
+      response: problem({
+        type: "urn:planloop:problem:proposal-revision-stale",
+        title: "Proposal revision stale",
+        status: 412,
+        detail: "If-Match does not contain the review proposal's current ETag.",
+        code: "proposal_revision_stale",
+      }),
+    }
+  }
+
+  return { ok: true, revision }
+}
+
 export async function handleStartProposalGenerationAttempt(
   request: Request,
   database: D1Database,
@@ -286,35 +328,14 @@ export async function handleStartProposalGenerationAttempt(
     return notFound("The requested review proposal does not exist.")
   }
 
-  const etag = request.headers.get("if-match")
-
-  if (etag === null) {
-    return problem({
-      type: "urn:planloop:problem:proposal-revision-required",
-      title: "Proposal revision required",
-      status: 428,
-      detail: "If-Match must contain the review proposal's current ETag.",
-      code: "proposal_revision_required",
-    })
-  }
-
-  const expectedRevision = revisionFromEtag(etag, parsedProposalId.output)
-
-  if (expectedRevision === null) {
-    return problem({
-      type: "urn:planloop:problem:proposal-revision-stale",
-      title: "Proposal revision stale",
-      status: 412,
-      detail: "If-Match does not contain the review proposal's current ETag.",
-      code: "proposal_revision_stale",
-    })
-  }
+  const revision = proposalRevisionFromRequest(request, parsedProposalId.output)
+  if (!revision.ok) return revision.response
 
   const result = await startProposalGenerationAttempt(
     database,
     startReviewProposalGeneration,
     parsedProposalId.output,
-    expectedRevision,
+    revision.revision,
   )
 
   switch (result.status) {
@@ -347,6 +368,84 @@ export async function handleStartProposalGenerationAttempt(
     case "accepted":
       return Response.json(toReviewProposalDto(result.proposal), {
         status: 202,
+        headers: {
+          etag: reviewProposalEtag(result.proposal.id, result.proposal.revision),
+        },
+      })
+  }
+}
+
+export async function handleReplaceReviewProposalDraft(
+  request: Request,
+  database: D1Database,
+  proposalId: string,
+): Promise<Response> {
+  const parsedProposalId = v.safeParse(UuidSchema, proposalId)
+
+  if (!parsedProposalId.success) {
+    return notFound("The requested review proposal does not exist.")
+  }
+
+  const revision = proposalRevisionFromRequest(request, parsedProposalId.output)
+  if (!revision.ok) return revision.response
+
+  const body = await parseJsonBody(request, ReplaceProposalDraftRequestSchema)
+  if (!body.ok) return body.response
+
+  const result = await replaceReviewProposalDraft(
+    database,
+    parsedProposalId.output,
+    revision.revision,
+    fromProposalDraftDto(body.value),
+  )
+
+  switch (result.status) {
+    case "proposal_not_found":
+      return notFound("The requested review proposal does not exist.")
+    case "revision_stale":
+      return problem({
+        type: "urn:planloop:problem:proposal-revision-stale",
+        title: "Proposal revision stale",
+        status: 412,
+        detail: "The review proposal changed after it was retrieved.",
+        code: "proposal_revision_stale",
+      })
+    case "proposal_updating":
+      return problem({
+        type: "urn:planloop:problem:proposal-updating",
+        title: "Proposal is updating",
+        status: 409,
+        detail: "The draft cannot be edited while proposal generation is running.",
+        code: "proposal_updating",
+      })
+    case "proposal_generation_failed":
+      return problem({
+        type: "urn:planloop:problem:proposal-generation-failed",
+        title: "Proposal generation failed",
+        status: 409,
+        detail: "Retry proposal generation before editing the draft.",
+        code: "proposal_generation_failed",
+      })
+    case "proposal_not_reviewable":
+      return problem({
+        type: "urn:planloop:problem:proposal-not-reviewable",
+        title: "Proposal is not reviewable",
+        status: 409,
+        detail: "A proposal with no recommended changes cannot be edited.",
+        code: "proposal_not_reviewable",
+      })
+    case "proposal_already_decided":
+      return problem({
+        type: "urn:planloop:problem:proposal-already-decided",
+        title: "Proposal already decided",
+        status: 409,
+        detail: "An approved or rejected proposal cannot be edited.",
+        code: "proposal_already_decided",
+      })
+    case "draft_invalid":
+      return validationProblem([{ field: "body", message: result.reason }])
+    case "updated":
+      return Response.json(toReviewProposalDto(result.proposal), {
         headers: {
           etag: reviewProposalEtag(result.proposal.id, result.proposal.revision),
         },

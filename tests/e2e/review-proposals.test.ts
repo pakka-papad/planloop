@@ -34,6 +34,39 @@ const ADD_STEP_CHANGE_ID = "0199d700-0001-4000-8000-000000000001"
 const server = createPlanLoopTestHarness()
 const worker = server.getWorker<Env>("planloop")
 
+function editedPendingDraft() {
+  return {
+    summary: "Check processor health before changing payment routing.",
+    proposed_plan: {
+      name: "Payment authorization decline spike",
+      use_when: "Use when valid card authorizations decline above baseline.",
+      steps: [
+        {
+          source_step_id: PAYMENT_STEP_ID,
+          title: "Classify processor responses",
+          description:
+            "Separate issuer declines from processor, routing, or integration failures.",
+        },
+        {
+          source_step_id: null,
+          title: "Verify regional processor health",
+          description:
+            "Review processor latency, timeout rate, and regional availability before changing routing.",
+        },
+      ],
+    },
+    changes: [
+      {
+        type: "add_step",
+        proposed_step_position: 2,
+        rationale:
+          "The response required a regional processor health check before rerouting traffic.",
+        action_record_ids: [ADDITIONAL_ACTION_ID],
+      },
+    ],
+  }
+}
+
 async function seedReviewProposals(database: D1Database): Promise<void> {
   const statements: D1PreparedStatement[] = []
 
@@ -572,6 +605,162 @@ test.each([
 
   expect(response.status).toBe(status)
   expect(await response.json()).toMatchObject({ code })
+})
+
+test("replaces a pending proposal draft and records the revision once", async () => {
+  const path = `/api/v1/review-proposals/${PROPOSALS.pending}/draft`
+  const request = () =>
+    server.fetch(path, {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+        "if-match": `"${PROPOSALS.pending}:2"`,
+      },
+      body: JSON.stringify(editedPendingDraft()),
+    })
+  const responses = await Promise.all([request(), request()])
+
+  expect(responses.map((response) => response.status).sort()).toEqual([200, 412])
+
+  const updated = responses.find((response) => response.status === 200)
+  expect(updated?.headers.get("etag")).toBe(`"${PROPOSALS.pending}:3"`)
+  expect(await updated?.json()).toMatchObject({
+    id: PROPOSALS.pending,
+    status: "pending_review",
+    revision: 3,
+    draft: editedPendingDraft(),
+  })
+
+  const env = await worker.getEnv()
+  const auditEvents = await env.DB.prepare(
+    `SELECT event_type, details_json
+     FROM audit_events
+     WHERE entity_id = ?`,
+  )
+    .bind(PROPOSALS.pending)
+    .all<{ event_type: string; details_json: string }>()
+
+  expect(auditEvents.results).toHaveLength(1)
+  expect(auditEvents.results[0]?.event_type).toBe("review_proposal_draft_edited")
+  expect(JSON.parse(auditEvents.results[0]?.details_json ?? "null")).toEqual({
+    revision: 3,
+    status: "pending_review",
+  })
+})
+
+test("moves an edited proposal with no plan differences to no_change", async () => {
+  const response = await server.fetch(
+    `/api/v1/review-proposals/${PROPOSALS.pending}/draft`,
+    {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+        "if-match": `"${PROPOSALS.pending}:2"`,
+      },
+      body: JSON.stringify({
+        summary: "The incident does not require an action plan change.",
+        proposed_plan: {
+          name: "Payment authorization decline spike",
+          use_when: "Use when valid card authorizations decline above baseline.",
+          steps: [
+            {
+              source_step_id: PAYMENT_STEP_ID,
+              title: "Classify processor responses",
+              description:
+                "Separate issuer declines from processor, routing, or integration failures.",
+            },
+          ],
+        },
+        changes: [],
+      }),
+    },
+  )
+  const body = (await response.json()) as {
+    status: string
+    revision: number
+    draft: { changes: unknown[] }
+    evidence: unknown[]
+  }
+
+  expect(response.status).toBe(200)
+  expect(response.headers.get("etag")).toBe(`"${PROPOSALS.pending}:3"`)
+  expect(body).toMatchObject({ status: "no_change", revision: 3 })
+  expect(body.draft.changes).toEqual([])
+  expect(body.evidence).toEqual([])
+})
+
+test.each([
+  [PROPOSALS.updating, "proposal_updating"],
+  [PROPOSALS.failed, "proposal_generation_failed"],
+  [PROPOSALS.noChange, "proposal_not_reviewable"],
+  [PROPOSALS.approved, "proposal_already_decided"],
+  [PROPOSALS.rejected, "proposal_already_decided"],
+])("rejects draft editing for proposal %s", async (proposalId, code) => {
+  const response = await server.fetch(
+    `/api/v1/review-proposals/${proposalId}/draft`,
+    {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+        "if-match": `"${proposalId}:2"`,
+      },
+      body: JSON.stringify(editedPendingDraft()),
+    },
+  )
+
+  expect(response.status).toBe(409)
+  expect(await response.json()).toMatchObject({ code })
+})
+
+test.each([
+  {
+    name: "missing If-Match",
+    headers: { "content-type": "application/json" },
+    status: 428,
+    code: "proposal_revision_required",
+  },
+  {
+    name: "stale revision",
+    headers: {
+      "content-type": "application/json",
+      "if-match": `"${PROPOSALS.pending}:1"`,
+    },
+    status: 412,
+    code: "proposal_revision_stale",
+  },
+])("rejects a draft replacement with $name", async ({ headers, status, code }) => {
+  const response = await server.fetch(
+    `/api/v1/review-proposals/${PROPOSALS.pending}/draft`,
+    {
+      method: "PUT",
+      headers,
+      body: JSON.stringify(editedPendingDraft()),
+    },
+  )
+
+  expect(response.status).toBe(status)
+  expect(await response.json()).toMatchObject({ code })
+})
+
+test("rejects a draft whose changes do not describe its plan differences", async () => {
+  const draft = editedPendingDraft()
+  const response = await server.fetch(
+    `/api/v1/review-proposals/${PROPOSALS.pending}/draft`,
+    {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+        "if-match": `"${PROPOSALS.pending}:2"`,
+      },
+      body: JSON.stringify({ ...draft, changes: [] }),
+    },
+  )
+
+  expect(response.status).toBe(422)
+  expect(await response.json()).toMatchObject({
+    code: "validation_error",
+    errors: [{ field: "body", message: "missing changes: add:2" }],
+  })
 })
 
 test("filters by one status", async () => {

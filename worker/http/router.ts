@@ -16,6 +16,7 @@ import { notFound } from "./problems"
 import {
   handleGetReviewProposal,
   handleListReviewProposals,
+  handleReplaceReviewProposalDraft,
   handleStartProposalGenerationAttempt,
 } from "./review-proposals"
 
@@ -118,6 +119,18 @@ const routes: readonly Route[] = [
             env.GENERATE_REVIEW_PROPOSAL_WORKFLOW,
             input,
           ),
+        match.pathname.groups.proposalId,
+      ),
+  },
+  {
+    method: "PUT",
+    pattern: new URLPattern({
+      pathname: "/api/v1/review-proposals/:proposalId/draft",
+    }),
+    handle: (request, env, match) =>
+      handleReplaceReviewProposalDraft(
+        request,
+        env.DB,
         match.pathname.groups.proposalId,
       ),
   },

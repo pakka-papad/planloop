@@ -8,8 +8,8 @@ import {
 import {
   findReviewProposalGenerationContext,
   markProposalGenerationFailed,
-  saveGeneratedProposalDraft,
 } from "../persistence/review-proposal-generation"
+import { saveGeneratedProposalDraft } from "../persistence/review-proposal-drafts"
 
 export class GenerateReviewProposalWorkflow extends WorkflowEntrypoint<
   Env,

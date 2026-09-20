@@ -9,8 +9,8 @@ import { UuidSchema } from "../../worker/domain/scalars"
 import {
   findReviewProposalGenerationContext,
   markProposalGenerationFailed,
-  saveGeneratedProposalDraft,
 } from "../../worker/persistence/review-proposal-generation"
+import { saveGeneratedProposalDraft } from "../../worker/persistence/review-proposal-drafts"
 import { findReviewProposalById } from "../../worker/persistence/review-proposals"
 import * as v from "valibot"
 import { createPlanLoopTestHarness } from "./harness"

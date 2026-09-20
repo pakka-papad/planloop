@@ -113,6 +113,24 @@ export async function findProposalWorkflowTarget(
     : { status: toReviewProposalStatus(row.status), revision: row.revision }
 }
 
+export async function findContributingActionRecordIds(
+  database: D1Database,
+  proposalId: Uuid,
+): Promise<readonly Uuid[]> {
+  const { results } = await database
+    .prepare(
+      `SELECT record.id
+       FROM action_records record
+       JOIN incidents incident ON incident.id = record.incident_id
+       WHERE incident.review_proposal_id = ? AND incident.status = 'closed'
+       ORDER BY record.incident_id, record.sequence, record.id`,
+    )
+    .bind(proposalId)
+    .all<{ id: string }>()
+
+  return results.map((row) => v.parse(UuidSchema, row.id))
+}
+
 export async function beginProposalGenerationAttempt(
   database: D1Database,
   proposalId: Uuid,
