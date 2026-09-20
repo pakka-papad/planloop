@@ -1,9 +1,15 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers"
 
+import { requestReviewProposalDraft } from "../ai/review-proposal-generator"
 import {
-  generateReviewProposal,
   type GenerateReviewProposalInput,
+  validateGeneratedProposalDraft,
 } from "../application/review-proposal-generation"
+import {
+  findReviewProposalGenerationContext,
+  markProposalGenerationFailed,
+  saveGeneratedProposalDraft,
+} from "../persistence/review-proposal-generation"
 
 export class GenerateReviewProposalWorkflow extends WorkflowEntrypoint<
   Env,
@@ -13,9 +19,54 @@ export class GenerateReviewProposalWorkflow extends WorkflowEntrypoint<
     event: WorkflowEvent<GenerateReviewProposalInput>,
     step: WorkflowStep,
   ) {
-    return step.do("proposal generation placeholder", async () =>
-      generateReviewProposal(event.payload),
-    )
+    const input = event.payload
+
+    try {
+      const context = await step.do("load generation context", async () =>
+        findReviewProposalGenerationContext(
+          this.env.DB,
+          input.proposalId,
+          input.revision,
+        ),
+      )
+
+      if (context === null) return { status: "superseded" as const }
+
+      const draft = await step.do(
+        "generate proposal draft",
+        {
+          retries: { limit: 3, delay: "5 seconds", backoff: "exponential" },
+          timeout: "5 minutes",
+        },
+        async () => validateGeneratedProposalDraft(
+          await requestReviewProposalDraft(this.env.AI, context),
+          context,
+        ),
+      )
+
+      const saved = await step.do("save generated proposal", async () =>
+        saveGeneratedProposalDraft(
+          this.env.DB,
+          input.proposalId,
+          input.revision,
+          draft,
+        ),
+      )
+
+      return { status: saved ? "completed" as const : "superseded" as const }
+    } catch (error) {
+      console.error(`Review proposal generation failed for ${input.proposalId}`, error)
+
+      const recorded = await step.do("record generation failure", async () =>
+        markProposalGenerationFailed(
+          this.env.DB,
+          input.proposalId,
+          input.revision,
+        ),
+      )
+
+      return { status: recorded ? "failed" as const : "superseded" as const }
+    }
   }
 }
 
@@ -30,7 +81,13 @@ export async function startReviewProposalGeneration(
     return true
   } catch (createError) {
     try {
-      await (await workflow.get(instanceId)).status()
+      const instance = await workflow.get(instanceId)
+      const status = await instance.status()
+
+      if (status.status === "errored" || status.status === "terminated") {
+        await instance.restart()
+      }
+
       return true
     } catch {
       console.error(createError)

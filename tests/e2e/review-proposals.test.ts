@@ -1,5 +1,6 @@
-import { createTestHarness } from "wrangler"
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "vitest"
+
+import { createPlanLoopTestHarness } from "./harness"
 
 const PLAN_IDS = [
   "0199d000-0001-4000-8000-000000000001",
@@ -30,9 +31,7 @@ const ADDITIONAL_ACTION_ID = "0199d500-0002-4000-8000-000000000002"
 const PROPOSED_NEW_STEP_ID = "0199d600-0002-4000-8000-000000000002"
 const ADD_STEP_CHANGE_ID = "0199d700-0001-4000-8000-000000000001"
 
-const server = createTestHarness({
-  workers: [{ configPath: "./dist/planloop/wrangler.json" }],
-})
+const server = createPlanLoopTestHarness()
 const worker = server.getWorker<Env>("planloop")
 
 async function seedReviewProposals(database: D1Database): Promise<void> {

@@ -1,0 +1,6 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "planloop-test-bindings",
+  "main": "./mock-bindings.ts",
+  "compatibility_date": "2026-09-19"
+}

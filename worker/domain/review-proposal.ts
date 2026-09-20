@@ -1,5 +1,5 @@
 import type { PlanVersion } from "./action-plan"
-import type { ActionRecord } from "./incident"
+import type { ActionRecord, Incident } from "./incident"
 import type { UtcTimestamp, Uuid } from "./scalars"
 
 export interface ProposedPlanStep {
@@ -47,6 +47,14 @@ export interface ProposalDraft {
   readonly summary: string
   readonly proposedPlan: ProposedPlan
   readonly changes: readonly ProposalChange[]
+}
+
+export interface ReviewProposalGenerationContext {
+  readonly proposalId: Uuid
+  readonly revision: number
+  readonly sourcePlanVersion: PlanVersion
+  readonly existingDraft: ProposalDraft | null
+  readonly incidents: readonly Incident[]
 }
 
 export type ReviewProposalStatus =

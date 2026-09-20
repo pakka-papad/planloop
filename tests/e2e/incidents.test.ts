@@ -1,5 +1,6 @@
-import { createTestHarness } from "wrangler"
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "vitest"
+
+import { createPlanLoopTestHarness } from "./harness"
 
 const PLAN_ID = "0199c000-0001-4000-8000-000000000001"
 const PREVIOUS_VERSION_ID = "0199c100-0001-4000-8000-000000000001"
@@ -8,9 +9,7 @@ const FIRST_INCIDENT_ID = "0199e000-0001-4000-8000-000000000001"
 const SECOND_INCIDENT_ID = "0199e000-0002-4000-8000-000000000002"
 const THIRD_INCIDENT_ID = "0199e000-0003-4000-8000-000000000003"
 
-const server = createTestHarness({
-  workers: [{ configPath: "./dist/planloop/wrangler.json" }],
-})
+const server = createPlanLoopTestHarness()
 const worker = server.getWorker<Env>("planloop")
 
 async function seedActionPlan(database: D1Database): Promise<void> {

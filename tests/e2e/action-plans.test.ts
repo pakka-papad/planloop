@@ -1,5 +1,6 @@
-import { createTestHarness } from "wrangler"
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "vitest"
+
+import { createPlanLoopTestHarness } from "./harness"
 
 const PLAN_ID = "0199b000-0001-4000-8000-000000000001"
 const CURRENT_VERSION_ID = "0199b100-0001-4000-8000-000000000002"
@@ -10,9 +11,7 @@ function encodedCursor(value: unknown): string {
   return Buffer.from(JSON.stringify(value)).toString("base64url")
 }
 
-const server = createTestHarness({
-  workers: [{ configPath: "./dist/planloop/wrangler.json" }],
-})
+const server = createPlanLoopTestHarness()
 const worker = server.getWorker<Env>("planloop")
 
 async function seedActionPlan(database: D1Database): Promise<void> {
