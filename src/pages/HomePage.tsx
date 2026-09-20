@@ -25,12 +25,12 @@ const workspaceCards = [
     available: false,
   },
   {
-    href: "/action-plans",
+    href: "/incidents",
     icon: ClipboardTextIcon,
     title: "Incident response",
-    description: "Choose an approved action plan before starting an incident.",
-    action: "Choose a plan",
-    available: false,
+    description: "Continue an open incident with its pinned action plan in view.",
+    action: "View open incidents",
+    available: true,
   },
 ] as const
 

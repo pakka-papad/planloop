@@ -9,6 +9,8 @@ import { ActionPlansPage } from "./pages/ActionPlansPage"
 import { CreateActionPlanPage } from "./pages/CreateActionPlanPage"
 import { CreateIncidentPage } from "./pages/CreateIncidentPage"
 import { HomePage } from "./pages/HomePage"
+import { IncidentPage } from "./pages/IncidentPage"
+import { IncidentsPage } from "./pages/IncidentsPage"
 import { PlaceholderPage } from "./pages/PlaceholderPage"
 
 interface Route {
@@ -61,6 +63,7 @@ function Header({ section }: { readonly section: Route["section"] }) {
         <nav className="ml-auto hidden items-center gap-1 sm:flex" aria-label="Primary navigation">
           <NavLink active={section === "home"} href="/">Home</NavLink>
           <NavLink active={section === "action-plans"} href="/action-plans">Action plans</NavLink>
+          <NavLink active={section === "incidents"} href="/incidents">Incidents</NavLink>
           <NavLink active={section === "review-proposals"} href="/review-proposals">Reviews</NavLink>
         </nav>
 
@@ -143,17 +146,21 @@ function resolveRoute(pathname: string, searchParams: URLSearchParams): Route {
     }
   }
 
-  if (/^\/incidents\/[^/]+$/.test(pathname)) {
+  if (pathname === "/incidents") {
     return {
-      content: (
-        <PlaceholderPage
-          description="Incident creation and the focused incident workspace will be implemented after the action-plan workflow."
-          eyebrow="Incident response"
-          title="Run the response from one focused workspace."
-        />
-      ),
+      content: <IncidentsPage />,
       section: "incidents",
-      title: "Incidents",
+      title: "Open incidents",
+    }
+  }
+
+  const incidentMatch = pathname.match(/^\/incidents\/([^/]+)$/)
+  if (incidentMatch) {
+    const incidentId = incidentMatch[1]
+    return {
+      content: <IncidentPage incidentId={incidentId} key={incidentId} />,
+      section: "incidents",
+      title: "Incident",
     }
   }
 

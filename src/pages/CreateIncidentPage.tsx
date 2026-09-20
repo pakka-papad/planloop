@@ -1,6 +1,5 @@
 import {
   ArrowLeftIcon,
-  CheckCircleIcon,
   WarningCircleIcon,
 } from "@phosphor-icons/react"
 import { useEffect, useState, type FormEvent } from "react"
@@ -9,6 +8,7 @@ import { getActionPlan, type ActionPlan } from "../api/action-plans"
 import { errorMessage, isAbortError } from "../api/client"
 import { createIncident } from "../api/incidents"
 import { AppLink } from "../navigation"
+import { navigateTo } from "../navigate"
 
 export function CreateIncidentPage({
   planId,
@@ -145,7 +145,6 @@ function IncidentForm({ plan }: { readonly plan: ActionPlan }) {
   const [symptoms, setSymptoms] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [created, setCreated] = useState(false)
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -153,15 +152,14 @@ function IncidentForm({ plan }: { readonly plan: ActionPlan }) {
     setIsSubmitting(true)
 
     try {
-      await createIncident({
+      const incident = await createIncident({
         title,
         symptoms,
         plan_version_id: plan.current_version.id,
       })
-      setCreated(true)
+      navigateTo(`/incidents/${incident.id}`)
     } catch (cause) {
       setError(errorMessage(cause))
-    } finally {
       setIsSubmitting(false)
     }
   }
@@ -182,8 +180,7 @@ function IncidentForm({ plan }: { readonly plan: ActionPlan }) {
         <input
           aria-describedby="incident-title-help"
           autoFocus
-          className="mt-3 w-full rounded-md border bg-background px-3 py-2.5 text-sm outline-none transition-shadow focus:ring-2 focus:ring-ring/40 disabled:opacity-60"
-          disabled={created}
+          className="mt-3 w-full rounded-md border bg-background px-3 py-2.5 text-sm outline-none transition-shadow focus:ring-2 focus:ring-ring/40"
           id="incident-title"
           maxLength={200}
           onChange={(event) => setTitle(event.target.value)}
@@ -200,8 +197,7 @@ function IncidentForm({ plan }: { readonly plan: ActionPlan }) {
         </p>
         <textarea
           aria-describedby="incident-symptoms-help"
-          className="mt-3 min-h-44 w-full resize-y rounded-md border bg-background px-3 py-2.5 text-sm leading-6 outline-none transition-shadow focus:ring-2 focus:ring-ring/40 disabled:opacity-60"
-          disabled={created}
+          className="mt-3 min-h-44 w-full resize-y rounded-md border bg-background px-3 py-2.5 text-sm leading-6 outline-none transition-shadow focus:ring-2 focus:ring-ring/40"
           id="incident-symptoms"
           maxLength={4000}
           onChange={(event) => setSymptoms(event.target.value)}
@@ -218,18 +214,6 @@ function IncidentForm({ plan }: { readonly plan: ActionPlan }) {
         </div>
       ) : null}
 
-      {created ? (
-        <div className="mt-6 flex gap-3 rounded-lg border border-primary/25 bg-primary/5 p-4" role="status">
-          <CheckCircleIcon aria-hidden="true" className="mt-0.5 shrink-0 text-primary" size={19} weight="fill" />
-          <div>
-            <p className="text-sm font-semibold">Incident created</p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              The incident has been opened with version {plan.current_version.version} pinned.
-            </p>
-          </div>
-        </div>
-      ) : null}
-
       <div className="mt-8 flex flex-wrap justify-end gap-3 border-t pt-6">
         <AppLink
           className="rounded-md border bg-background px-4 py-2.5 text-sm font-semibold transition-colors hover:bg-accent"
@@ -239,10 +223,10 @@ function IncidentForm({ plan }: { readonly plan: ActionPlan }) {
         </AppLink>
         <button
           className="rounded-md bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-          disabled={isSubmitting || created}
+          disabled={isSubmitting}
           type="submit"
         >
-          {isSubmitting ? "Creating…" : created ? "Incident created" : "Create incident"}
+          {isSubmitting ? "Creating…" : "Create incident"}
         </button>
       </div>
     </form>
