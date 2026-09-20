@@ -339,6 +339,178 @@ test.each([
   })
 })
 
+test("adds step and additional-action records to an open incident", async () => {
+  const env = await worker.getEnv()
+  await seedIncidents(env.DB)
+
+  const stepResponse = await server.fetch(
+    `/api/v1/incidents/${FIRST_INCIDENT_ID}/action-records`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        type: "step_completed",
+        plan_step_id: "0199c200-0001-4000-8000-000000000001",
+        details: "Confirmed the affected account settings requests.",
+      }),
+    },
+  )
+  const stepRecord = (await stepResponse.json()) as { id: string; recorded_at: string }
+
+  expect(stepResponse.status).toBe(201)
+  expect(stepRecord).toMatchObject({
+    incident_id: FIRST_INCIDENT_ID,
+    type: "step_completed",
+    plan_step_id: "0199c200-0001-4000-8000-000000000001",
+    details: "Confirmed the affected account settings requests.",
+    reason: null,
+    recorded_by: null,
+  })
+  expect(stepRecord.id).toMatch(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+  )
+  expect(stepRecord.recorded_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
+
+  const additionalResponse = await server.fetch(
+    `/api/v1/incidents/${FIRST_INCIDENT_ID}/action-records`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        type: "additional_action",
+        details: "Disabled the faulty token-validation cache before restoring traffic.",
+        reason: "Cached signing keys were stale.",
+      }),
+    },
+  )
+
+  expect(additionalResponse.status).toBe(201)
+  expect(await additionalResponse.json()).toMatchObject({
+    incident_id: FIRST_INCIDENT_ID,
+    type: "additional_action",
+    plan_step_id: null,
+    details: "Disabled the faulty token-validation cache before restoring traffic.",
+    reason: "Cached signing keys were stale.",
+  })
+
+  const getResponse = await server.fetch(`/api/v1/incidents/${FIRST_INCIDENT_ID}`)
+  const incident = (await getResponse.json()) as { action_records: unknown[] }
+
+  expect(getResponse.status).toBe(200)
+  expect(incident.action_records).toHaveLength(2)
+})
+
+test("allows multiple action records for the same pinned step", async () => {
+  const env = await worker.getEnv()
+  await seedIncidents(env.DB)
+  const path = `/api/v1/incidents/${FIRST_INCIDENT_ID}/action-records`
+
+  const firstResponse = await server.fetch(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      type: "step_completed",
+      plan_step_id: "0199c200-0001-4000-8000-000000000001",
+    }),
+  })
+  const secondResponse = await server.fetch(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      type: "step_skipped",
+      plan_step_id: "0199c200-0001-4000-8000-000000000001",
+      reason: "The step was no longer safe to perform.",
+    }),
+  })
+
+  expect(firstResponse.status).toBe(201)
+  expect(secondResponse.status).toBe(201)
+
+  const getResponse = await server.fetch(`/api/v1/incidents/${FIRST_INCIDENT_ID}`)
+  const incident = (await getResponse.json()) as { action_records: unknown[] }
+
+  expect(getResponse.status).toBe(200)
+  expect(incident.action_records).toHaveLength(2)
+})
+
+test("rejects action records for a closed incident", async () => {
+  const env = await worker.getEnv()
+  await seedIncidents(env.DB)
+
+  const response = await server.fetch(
+    `/api/v1/incidents/${SECOND_INCIDENT_ID}/action-records`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        type: "step_completed",
+        plan_step_id: "0199c200-0002-4000-8000-000000000001",
+      }),
+    },
+  )
+
+  expect(response.status).toBe(409)
+  expect(await response.json()).toMatchObject({ code: "incident_closed" })
+})
+
+test("rejects a step outside the incident's pinned plan version", async () => {
+  const env = await worker.getEnv()
+  await seedIncidents(env.DB)
+
+  const response = await server.fetch(
+    `/api/v1/incidents/${FIRST_INCIDENT_ID}/action-records`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        type: "step_completed",
+        plan_step_id: "0199c200-0002-4000-8000-000000000001",
+      }),
+    },
+  )
+
+  expect(response.status).toBe(422)
+  expect(await response.json()).toMatchObject({
+    code: "validation_error",
+    errors: [{ field: "plan_step_id" }],
+  })
+})
+
+test.each([
+  {
+    type: "step_completed",
+    plan_step_id: "0199c200-0001-4000-8000-000000000001",
+    reason: "Reasons are prohibited for completed steps.",
+  },
+  {
+    type: "step_skipped",
+    plan_step_id: "0199c200-0001-4000-8000-000000000001",
+  },
+  {
+    type: "step_modified",
+    plan_step_id: "0199c200-0001-4000-8000-000000000001",
+    reason: "The original procedure was unsafe.",
+  },
+  {
+    type: "additional_action",
+    plan_step_id: "0199c200-0001-4000-8000-000000000001",
+    details: "Restarted the identity proxy.",
+  },
+  { type: "additional_action" },
+])("rejects an action record that violates its type rules", async (body) => {
+  const response = await server.fetch(
+    `/api/v1/incidents/${FIRST_INCIDENT_ID}/action-records`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  )
+
+  expect(response.status).toBe(422)
+  expect(await response.json()).toMatchObject({ code: "validation_error" })
+})
+
 test("lists incidents in stable pages without plan steps or action records", async () => {
   const env = await worker.getEnv()
   await seedIncidents(env.DB)

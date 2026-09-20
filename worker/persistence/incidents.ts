@@ -170,6 +170,57 @@ export async function findIncidentById(
   return toIncident(incident, pinnedPlanVersion, actionRecords.map(toActionRecord))
 }
 
+export async function insertActionRecord(
+  database: D1Database,
+  record: ActionRecord,
+): Promise<boolean> {
+  const statement =
+    record.planStepId === null
+      ? database
+          .prepare(
+            `INSERT INTO action_records
+               (id, incident_id, type, plan_step_id, details, reason, recorded_at, recorded_by)
+             SELECT ?, incident.id, ?, NULL, ?, ?, ?, ?
+             FROM incidents incident
+             WHERE incident.id = ?
+               AND incident.status = 'open'`,
+          )
+          .bind(
+            record.id,
+            record.type,
+            record.details,
+            record.reason,
+            record.recordedAt,
+            record.recordedBy,
+            record.incidentId,
+          )
+      : database
+          .prepare(
+            `INSERT INTO action_records
+               (id, incident_id, type, plan_step_id, details, reason, recorded_at, recorded_by)
+             SELECT ?, incident.id, ?, step.id, ?, ?, ?, ?
+             FROM incidents incident
+             JOIN action_plan_steps step
+               ON step.id = ? AND step.plan_version_id = incident.plan_version_id
+             WHERE incident.id = ?
+               AND incident.status = 'open'`,
+          )
+          .bind(
+            record.id,
+            record.type,
+            record.details,
+            record.reason,
+            record.recordedAt,
+            record.recordedBy,
+            record.planStepId,
+            record.incidentId,
+          )
+
+  const result = await statement.run()
+
+  return result.meta.changes === 1
+}
+
 export async function findIncidents(
   database: D1Database,
   status: IncidentStatus | null,

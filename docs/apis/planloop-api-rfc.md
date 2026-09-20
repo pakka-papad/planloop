@@ -190,7 +190,7 @@ Lists incidents for navigation. It accepts `status=open|closed`, `limit`, and `c
 
 ### 3.3 Record what happened
 
-During an open incident, engineers append action records rather than editing the pinned plan. Before closure, every pinned step must receive one terminal record, and actions absent from the plan are recorded separately.
+During an open incident, engineers append action records rather than editing the pinned plan. Before closure, every pinned step must have at least one action record, and actions absent from the plan are recorded separately.
 
 An action record contains:
 
@@ -211,8 +211,9 @@ Request rules:
 - `step_skipped` requires `plan_step_id` and `reason`; `details` is optional.
 - `step_modified` requires `plan_step_id`, `details`, and `reason`.
 - `additional_action` requires `details`, prohibits `plan_step_id`, and permits an optional `reason`.
-- A pinned step may have at most one of `step_completed`, `step_skipped`, or `step_modified` per incident.
+- A pinned step may have multiple action records of any step-record type.
 - Action records are append-only.
+- All records are retained as evidence for review-proposal generation.
 
 #### `POST /incidents/{incident_id}/action-records`
 
@@ -225,7 +226,7 @@ Request rules:
 }
 ```
 
-The incident must be open. A closed incident returns `409` with code `incident_closed`; a second terminal record for the same step returns `409` with code `plan_step_already_recorded`.
+The incident must be open. A closed incident returns `409` with code `incident_closed`.
 
 Returns `201 Created` with the complete action record.
 
@@ -233,7 +234,7 @@ Returns `201 Created` with the complete action record.
 
 #### `PUT /incidents/{incident_id}/closure`
 
-The request has no body. Every step in the pinned plan must have exactly one terminal action record. Otherwise the server returns `409` with code `incident_has_unrecorded_steps` and `unrecorded_plan_step_ids`, an ordered array of the missing step IDs.
+The request has no body. Every step in the pinned plan must have at least one action record. Otherwise the server returns `409` with code `incident_has_unrecorded_steps` and `unrecorded_plan_step_ids`, an ordered array of the missing step IDs.
 
 The plan was followed as written when every pinned step has a `step_completed` record and the incident has no `step_skipped`, `step_modified`, or `additional_action` records. `details` on a `step_completed` record do not change this classification. Such an incident closes with `review_proposal_id: null`; the server neither creates nor updates a proposal and does not start a Workflow. Retrying its closure returns the existing closure state.
 

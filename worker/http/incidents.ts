@@ -1,6 +1,8 @@
 import * as v from "valibot"
 
 import {
+  addActionRecord,
+  type AddActionRecordInput,
   createIncident,
   getIncident,
   listIncidents,
@@ -15,7 +17,11 @@ import type {
 } from "../domain/incident"
 import { UuidSchema } from "../domain/scalars"
 import { cursorParser, encodeCursor } from "./cursors"
-import { CreateIncidentRequestSchema } from "./incident-schemas"
+import {
+  CreateActionRecordRequestSchema,
+  CreateIncidentRequestSchema,
+  type CreateActionRecordRequest,
+} from "./incident-schemas"
 import { notFound, problem, validationProblem } from "./problems"
 import { toPlanVersionDto, type PlanVersionDto } from "./action-plans"
 import { PageLimitSchema, parseQueryParam, schemaParser } from "./query-params"
@@ -65,13 +71,6 @@ export interface IncidentSummaryDto {
   readonly closed_by: string | null
 }
 
-export interface CreateActionRecordRequest {
-  readonly type: ActionRecordTypeDto
-  readonly plan_step_id?: string
-  readonly details?: string
-  readonly reason?: string
-}
-
 export async function handleCreateIncident(
   request: Request,
   database: D1Database,
@@ -110,6 +109,85 @@ export async function handleCreateIncident(
     status: 201,
     headers: { location: `/api/v1/incidents/${result.incident.id}` },
   })
+}
+
+function toAddActionRecordInput(
+  request: CreateActionRecordRequest,
+): AddActionRecordInput {
+  switch (request.type) {
+    case "step_completed":
+      return {
+        type: request.type,
+        planStepId: request.plan_step_id,
+        details: request.details,
+        reason: null,
+      }
+    case "step_skipped":
+      return {
+        type: request.type,
+        planStepId: request.plan_step_id,
+        details: request.details,
+        reason: request.reason,
+      }
+    case "step_modified":
+      return {
+        type: request.type,
+        planStepId: request.plan_step_id,
+        details: request.details,
+        reason: request.reason,
+      }
+    case "additional_action":
+      return {
+        type: request.type,
+        planStepId: null,
+        details: request.details,
+        reason: request.reason,
+      }
+  }
+}
+
+export async function handleAddActionRecord(
+  request: Request,
+  database: D1Database,
+  incidentId: string,
+): Promise<Response> {
+  const parsedIncidentId = v.safeParse(UuidSchema, incidentId)
+
+  if (!parsedIncidentId.success) {
+    return notFound("The requested incident does not exist.")
+  }
+
+  const body = await parseJsonBody(request, CreateActionRecordRequestSchema)
+
+  if (!body.ok) return body.response
+
+  const result = await addActionRecord(
+    database,
+    parsedIncidentId.output,
+    toAddActionRecordInput(body.value),
+  )
+
+  switch (result.status) {
+    case "created":
+      return Response.json(toActionRecordDto(result.record), { status: 201 })
+    case "incident_not_found":
+      return notFound("The requested incident does not exist.")
+    case "incident_closed":
+      return problem({
+        type: "urn:planloop:problem:incident-closed",
+        title: "Incident closed",
+        status: 409,
+        detail: "Action records cannot be added to a closed incident.",
+        code: "incident_closed",
+      })
+    case "plan_step_not_in_incident":
+      return validationProblem([
+        {
+          field: "plan_step_id",
+          message: "Must identify a step in the incident's pinned action plan version.",
+        },
+      ])
+  }
 }
 
 export async function handleGetIncident(
