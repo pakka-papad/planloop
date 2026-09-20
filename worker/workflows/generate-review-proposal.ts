@@ -85,11 +85,20 @@ export async function startReviewProposalGeneration(
       const instance = await workflow.get(instanceId)
       const status = await instance.status()
 
-      if (status.status === "errored" || status.status === "terminated") {
-        await instance.restart()
+      switch (status.status) {
+        case "queued":
+        case "running":
+        case "paused":
+        case "complete":
+        case "waiting":
+        case "waitingForPause":
+          return true
+        case "errored":
+        case "terminated":
+        case "rollingBack":
+        case "unknown":
+          return false
       }
-
-      return true
     } catch {
       console.error(createError)
       return false
