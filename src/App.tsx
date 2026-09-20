@@ -1,6 +1,5 @@
 import {
   BookOpenTextIcon,
-  PlusIcon,
 } from "@phosphor-icons/react"
 import { useEffect, useSyncExternalStore, type ReactNode } from "react"
 
@@ -8,6 +7,7 @@ import { AppLink } from "./navigation"
 import { ActionPlanPage } from "./pages/ActionPlanPage"
 import { ActionPlansPage } from "./pages/ActionPlansPage"
 import { CreateActionPlanPage } from "./pages/CreateActionPlanPage"
+import { CreateIncidentPage } from "./pages/CreateIncidentPage"
 import { HomePage } from "./pages/HomePage"
 import { PlaceholderPage } from "./pages/PlaceholderPage"
 
@@ -22,17 +22,18 @@ function subscribeToNavigation(onChange: () => void) {
   return () => window.removeEventListener("popstate", onChange)
 }
 
-function usePathname(): string {
+function useLocation(): string {
   return useSyncExternalStore(
     subscribeToNavigation,
-    () => window.location.pathname,
+    () => `${window.location.pathname}${window.location.search}`,
     () => "/",
   )
 }
 
 export default function App() {
-  const pathname = usePathname()
-  const route = resolveRoute(pathname)
+  const location = useLocation()
+  const [pathname, query = ""] = location.split("?", 2)
+  const route = resolveRoute(pathname, new URLSearchParams(query))
 
   useEffect(() => {
     document.title = `${route.title} · PlanLoop`
@@ -63,13 +64,6 @@ function Header({ section }: { readonly section: Route["section"] }) {
           <NavLink active={section === "review-proposals"} href="/review-proposals">Reviews</NavLink>
         </nav>
 
-        <AppLink
-          className="ml-auto inline-flex items-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 sm:ml-2"
-          href="/incidents/new"
-        >
-          <PlusIcon aria-hidden="true" size={15} weight="bold" />
-          Create incident
-        </AppLink>
       </div>
     </header>
   )
@@ -95,7 +89,7 @@ function NavLink({
   )
 }
 
-function resolveRoute(pathname: string): Route {
+function resolveRoute(pathname: string, searchParams: URLSearchParams): Route {
   if (pathname === "/") {
     return { content: <HomePage />, section: "home", title: "Home" }
   }
@@ -136,7 +130,20 @@ function resolveRoute(pathname: string): Route {
     }
   }
 
-  if (pathname === "/incidents/new" || /^\/incidents\/[^/]+$/.test(pathname)) {
+  if (pathname === "/incidents/new") {
+    return {
+      content: (
+        <CreateIncidentPage
+          planId={searchParams.get("plan_id")}
+          planVersionId={searchParams.get("plan_version_id")}
+        />
+      ),
+      section: "incidents",
+      title: "Create incident",
+    }
+  }
+
+  if (/^\/incidents\/[^/]+$/.test(pathname)) {
     return {
       content: (
         <PlaceholderPage

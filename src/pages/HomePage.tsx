@@ -3,7 +3,6 @@ import {
   BookOpenTextIcon,
   ClipboardTextIcon,
   ListChecksIcon,
-  PlusIcon,
 } from "@phosphor-icons/react"
 
 import { AppLink } from "../navigation"
@@ -26,11 +25,11 @@ const workspaceCards = [
     available: false,
   },
   {
-    href: "/incidents/new",
+    href: "/action-plans",
     icon: ClipboardTextIcon,
     title: "Incident response",
-    description: "Start an incident and work from a pinned action plan.",
-    action: "Create incident",
+    description: "Choose an approved action plan before starting an incident.",
+    action: "Choose a plan",
     available: false,
   },
 ] as const
@@ -56,13 +55,6 @@ export function HomePage() {
               >
                 Browse action plans
                 <ArrowRightIcon aria-hidden="true" size={16} weight="bold" />
-              </AppLink>
-              <AppLink
-                className="inline-flex items-center gap-2 rounded-md border bg-background px-4 py-2.5 text-sm font-semibold transition-colors hover:bg-accent"
-                href="/incidents/new"
-              >
-                <PlusIcon aria-hidden="true" size={16} weight="bold" />
-                Create incident
               </AppLink>
             </div>
           </div>
@@ -103,7 +95,7 @@ export function HomePage() {
             <AppLink
               className="group flex min-h-64 flex-col rounded-xl border bg-card p-6 transition-colors hover:border-primary/40 hover:bg-accent/30"
               href={href}
-              key={href}
+              key={title}
             >
               <div className="flex items-start justify-between gap-4">
                 <span className="grid size-11 place-items-center rounded-lg bg-primary/10 text-primary">

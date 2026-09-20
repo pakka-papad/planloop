@@ -1,6 +1,7 @@
 import {
   ArrowLeftIcon,
   CheckCircleIcon,
+  PlusIcon,
 } from "@phosphor-icons/react"
 import { useEffect, useState } from "react"
 
@@ -85,9 +86,18 @@ function PlanArticle({ plan }: { readonly plan: ActionPlan }) {
           <span aria-hidden="true" className="text-border">•</span>
           <span className="text-muted-foreground">{formatDate(version.approved_at)}</span>
         </div>
-        <h1 className="mt-5 max-w-3xl text-3xl font-semibold tracking-tight sm:text-4xl">
-          {version.name}
-        </h1>
+        <div className="mt-5 flex flex-col justify-between gap-5 sm:flex-row sm:items-start">
+          <h1 className="max-w-3xl text-3xl font-semibold tracking-tight sm:text-4xl">
+            {version.name}
+          </h1>
+          <AppLink
+            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-md bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+            href={`/incidents/new?plan_id=${encodeURIComponent(plan.id)}&plan_version_id=${encodeURIComponent(version.id)}`}
+          >
+            <PlusIcon aria-hidden="true" size={16} weight="bold" />
+            Create incident
+          </AppLink>
+        </div>
         <div className="mt-7 rounded-lg border-l-4 border-l-primary bg-muted/45 p-5">
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Use when</p>
           <p className="mt-2 leading-7">{version.use_when}</p>
