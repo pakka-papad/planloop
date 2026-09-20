@@ -105,7 +105,7 @@ export function ActionRecordEditor({
           return (
             <button
               aria-pressed={selected}
-              className={`flex items-start gap-3 rounded-lg border p-3 text-left transition-colors ${selected ? "border-primary bg-primary/5" : "bg-background hover:bg-accent"}`}
+              className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-left transition-colors ${selected ? "border-primary bg-primary/5" : "bg-background hover:bg-accent"}`}
               key={option.value}
               onClick={() => {
                 setType(option.value)
@@ -135,7 +135,7 @@ export function ActionRecordEditor({
             value={planStepId}
           >
             <Select.Label className="text-sm font-semibold">Plan step</Select.Label>
-            <Select.Trigger className="mt-2 flex w-full items-center justify-between gap-3 rounded-md border bg-background px-3 py-2.5 text-left text-sm outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/40 data-popup-open:bg-accent">
+            <Select.Trigger className="mt-2 flex w-full cursor-pointer items-center justify-between gap-3 rounded-md border bg-background px-3 py-2.5 text-left text-sm outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/40 data-popup-open:bg-accent">
               <Select.Value />
               <Select.Icon className="shrink-0 text-muted-foreground">
                 <CaretUpDownIcon aria-hidden="true" size={16} />
@@ -147,7 +147,7 @@ export function ActionRecordEditor({
                   <Select.List className="max-h-[min(20rem,var(--available-height))] overflow-y-auto p-1">
                     {planStepOptions.map((option) => (
                       <Select.Item
-                        className="grid cursor-default grid-cols-[1.25rem_minmax(0,1fr)] items-center gap-2 rounded-sm px-2 py-2.5 text-sm outline-none data-highlighted:bg-accent data-highlighted:text-accent-foreground"
+                        className="grid cursor-pointer grid-cols-[1.25rem_minmax(0,1fr)] items-center gap-2 rounded-sm px-2 py-2.5 text-sm outline-none data-highlighted:bg-accent data-highlighted:text-accent-foreground"
                         key={option.value}
                         value={option.value}
                       >
@@ -208,7 +208,7 @@ export function ActionRecordEditor({
 
       <div className="mt-6 flex justify-end">
         <button
-          className="rounded-md bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+          className="cursor-pointer rounded-md bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           disabled={isSubmitting}
           type="submit"
         >

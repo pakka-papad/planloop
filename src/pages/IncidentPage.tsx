@@ -222,7 +222,7 @@ function IncidentActivity({
               open={isConfirmingClosure}
             >
               <AlertDialog.Trigger
-                className="rounded-md bg-destructive px-3 py-2 text-sm font-semibold text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-45"
+                className="cursor-pointer rounded-md bg-destructive px-3 py-2 text-sm font-semibold text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-45"
                 disabled={unrecordedStepCount > 0 || isClosing}
                 onClick={() => setClosureError(null)}
               >
@@ -241,13 +241,13 @@ function IncidentActivity({
                     ) : null}
                     <div className="mt-6 flex justify-end gap-2">
                       <AlertDialog.Close
-                        className="rounded-md border bg-background px-3 py-2 text-sm font-semibold hover:bg-muted disabled:opacity-50"
+                        className="cursor-pointer rounded-md border bg-background px-3 py-2 text-sm font-semibold hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                         disabled={isClosing}
                       >
                         Cancel
                       </AlertDialog.Close>
                       <button
-                        className="rounded-md bg-destructive px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                        className="cursor-pointer rounded-md bg-destructive px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
                         disabled={isClosing}
                         onClick={() => void confirmClosure()}
                         type="button"
