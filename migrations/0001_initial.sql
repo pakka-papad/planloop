@@ -125,16 +125,3 @@ CREATE TABLE review_proposal_change_evidence (
   action_record_id TEXT NOT NULL REFERENCES action_records(id),
   PRIMARY KEY (change_id, action_record_id)
 );
-
-CREATE TABLE audit_events (
-  id TEXT PRIMARY KEY,
-  actor_id TEXT,
-  event_type TEXT NOT NULL,
-  entity_type TEXT NOT NULL,
-  entity_id TEXT NOT NULL,
-  details_json TEXT,
-  created_at TEXT NOT NULL
-);
-
-CREATE INDEX audit_events_entity_created_at_idx
-  ON audit_events(entity_type, entity_id, created_at, id);

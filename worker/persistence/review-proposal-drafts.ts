@@ -10,9 +10,6 @@ const proposalIsCurrent = `EXISTS (
 )`
 
 type DraftWriteStatus = "updating" | "pending_review"
-type DraftWriteEvent =
-  | "review_proposal_generation_completed"
-  | "review_proposal_draft_edited"
 
 function proposedStepIdForChange(
   change: ProposalChange,
@@ -36,7 +33,6 @@ async function replaceProposalDraft(
   proposalId: Uuid,
   expectedRevision: number,
   expectedStatus: DraftWriteStatus,
-  eventType: DraftWriteEvent,
   draft: ProposalDraft,
 ): Promise<boolean> {
   const updatedAt = currentUtcTimestamp()
@@ -146,24 +142,6 @@ async function replaceProposalDraft(
          WHERE ${proposalIsCurrent}`,
       )
       .bind(JSON.stringify(evidence), proposalId, expectedStatus, expectedRevision),
-    database
-      .prepare(
-        `INSERT INTO audit_events
-           (id, actor_id, event_type, entity_type, entity_id, details_json, created_at)
-         SELECT ?, NULL, ?,
-                'review_proposal', id, ?, ?
-         FROM review_proposals
-         WHERE id = ? AND revision = ? AND status = ?`,
-      )
-      .bind(
-        generateUuid(),
-        eventType,
-        JSON.stringify({ revision: expectedRevision + 1, status }),
-        updatedAt,
-        proposalId,
-        expectedRevision,
-        expectedStatus,
-      ),
   ]
 
   const updateIndex = statements.length
@@ -209,7 +187,6 @@ export function saveGeneratedProposalDraft(
     proposalId,
     expectedRevision,
     "updating",
-    "review_proposal_generation_completed",
     draft,
   )
 }
@@ -225,7 +202,6 @@ export function saveEditedProposalDraft(
     proposalId,
     expectedRevision,
     "pending_review",
-    "review_proposal_draft_edited",
     draft,
   )
 }

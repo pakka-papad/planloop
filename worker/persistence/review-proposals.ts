@@ -135,25 +135,10 @@ export async function beginProposalGenerationAttempt(
   database: D1Database,
   proposalId: Uuid,
   expectedRevision: number,
-  auditEventId: Uuid,
   updatedAt: UtcTimestamp,
   staleBefore: UtcTimestamp,
 ): Promise<number | null> {
-  const auditRetry = database
-    .prepare(
-      `INSERT INTO audit_events
-         (id, actor_id, event_type, entity_type, entity_id, details_json, created_at)
-       SELECT ?, NULL, 'review_proposal_generation_retried',
-              'review_proposal', id,
-              json_object('failure_reason', failure_reason, 'revision', revision), ?
-       FROM review_proposals
-       WHERE id = ?
-         AND revision = ?
-         AND status IN ('failed', 'updating')
-         AND (status = 'failed' OR updated_at <= ?)`,
-    )
-    .bind(auditEventId, updatedAt, proposalId, expectedRevision, staleBefore)
-  const transition = database
+  const transition = await database
     .prepare(
       `UPDATE review_proposals
        SET status = 'updating',
@@ -166,12 +151,9 @@ export async function beginProposalGenerationAttempt(
        RETURNING revision`,
     )
     .bind(staleBefore, staleBefore, updatedAt, proposalId, expectedRevision)
-  const results = await database.batch<{ revision: number }>([
-    auditRetry,
-    transition,
-  ])
+    .first<{ revision: number }>()
 
-  return results[1]?.results[0]?.revision ?? null
+  return transition?.revision ?? null
 }
 
 function toVersionSummary(

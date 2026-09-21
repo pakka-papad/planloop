@@ -177,12 +177,6 @@ test("validates and saves a cited generated draft", async () => {
     },
     evidence: [{ id: ACTION_RECORD_ID }],
   })
-  expect(
-    await database
-      .prepare("SELECT event_type FROM audit_events WHERE entity_id = ?")
-      .bind(PROPOSAL_ID)
-      .first(),
-  ).toEqual({ event_type: "review_proposal_generation_completed" })
 })
 
 test("bulk-saves a proposal with many steps, changes, and citations", async () => {

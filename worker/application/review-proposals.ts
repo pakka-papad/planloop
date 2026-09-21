@@ -278,7 +278,6 @@ export async function startProposalGenerationAttempt(
     database,
     proposalId,
     expectedRevision,
-    generateUuid(),
     updatedAt,
     staleBefore,
   )

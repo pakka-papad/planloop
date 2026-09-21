@@ -1,5 +1,5 @@
 import type { PlanVersion } from "../domain/action-plan"
-import { generateUuid, type UtcTimestamp, type Uuid } from "../domain/scalars"
+import type { UtcTimestamp, Uuid } from "../domain/scalars"
 
 export async function approveReviewProposal(
   database: D1Database,
@@ -68,31 +68,6 @@ export async function approveReviewProposal(
         createdVersion.id,
         createdVersion.planId,
       ),
-    database
-      .prepare(
-        `INSERT INTO audit_events
-           (id, actor_id, event_type, entity_type, entity_id, details_json, created_at)
-         SELECT ?, NULL, 'review_proposal_approved', 'review_proposal', proposal.id,
-                json_object(
-                  'revision', proposal.revision + 1,
-                  'created_plan_version_id', ?
-                ), ?
-         FROM review_proposals proposal
-         WHERE proposal.id = ?
-           AND proposal.status = 'pending_review'
-           AND proposal.revision = ?
-           AND EXISTS (
-             SELECT 1 FROM action_plan_versions version WHERE version.id = ?
-           )`,
-      )
-      .bind(
-        generateUuid(),
-        createdVersion.id,
-        createdVersion.approvedAt,
-        proposalId,
-        expectedRevision,
-        createdVersion.id,
-      ),
   ]
 
   const updateIndex = statements.length
@@ -139,17 +114,7 @@ export async function rejectReviewProposal(
   comment: string,
   decidedAt: UtcTimestamp,
 ): Promise<boolean> {
-  const audit = database
-    .prepare(
-      `INSERT INTO audit_events
-         (id, actor_id, event_type, entity_type, entity_id, details_json, created_at)
-       SELECT ?, NULL, 'review_proposal_rejected', 'review_proposal', id,
-              json_object('revision', revision + 1), ?
-       FROM review_proposals
-       WHERE id = ? AND status = 'pending_review' AND revision = ?`,
-    )
-    .bind(generateUuid(), decidedAt, proposalId, expectedRevision)
-  const decision = database
+  const decision = await database
     .prepare(
       `UPDATE review_proposals
        SET status = 'rejected',
@@ -163,7 +128,7 @@ export async function rejectReviewProposal(
        WHERE id = ? AND status = 'pending_review' AND revision = ?`,
     )
     .bind(decidedAt, decidedAt, comment, proposalId, expectedRevision)
-  const results = await database.batch([audit, decision])
+    .run()
 
-  return results[1]?.meta.changes === 1
+  return decision.meta.changes === 1
 }

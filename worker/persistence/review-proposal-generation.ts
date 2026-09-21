@@ -1,10 +1,6 @@
 import type { Incident } from "../domain/incident"
 import type { ReviewProposalGenerationContext } from "../domain/review-proposal"
-import {
-  currentUtcTimestamp,
-  generateUuid,
-  type Uuid,
-} from "../domain/scalars"
+import { currentUtcTimestamp, type Uuid } from "../domain/scalars"
 import { findIncidentById } from "./incidents"
 import { findReviewProposalById } from "./review-proposals"
 
@@ -58,34 +54,17 @@ export async function markProposalGenerationFailed(
   failureReason: string,
 ): Promise<boolean> {
   const failedAt = currentUtcTimestamp()
-  const results = await database.batch([
-    database
-      .prepare(
-        `UPDATE review_proposals
-         SET status = 'failed',
-             failure_reason = ?,
-             revision = revision + 1,
-             updated_at = ?
-         WHERE id = ? AND status = 'updating' AND revision = ?`,
-      )
-      .bind(failureReason, failedAt, proposalId, expectedRevision),
-    database
-      .prepare(
-        `INSERT INTO audit_events
-           (id, actor_id, event_type, entity_type, entity_id, details_json, created_at)
-         SELECT ?, NULL, 'review_proposal_generation_failed',
-                'review_proposal', id, ?, ?
-         FROM review_proposals
-         WHERE id = ? AND status = 'failed' AND revision = ?`,
-      )
-      .bind(
-        generateUuid(),
-        JSON.stringify({ failure_reason: failureReason, revision: expectedRevision + 1 }),
-        failedAt,
-        proposalId,
-        expectedRevision + 1,
-      ),
-  ])
+  const result = await database
+    .prepare(
+      `UPDATE review_proposals
+       SET status = 'failed',
+           failure_reason = ?,
+           revision = revision + 1,
+           updated_at = ?
+       WHERE id = ? AND status = 'updating' AND revision = ?`,
+    )
+    .bind(failureReason, failedAt, proposalId, expectedRevision)
+    .run()
 
-  return results[0]?.meta.changes === 1
+  return result.meta.changes === 1
 }

@@ -306,7 +306,7 @@ For a `failed` proposal, the server moves the proposal to `updating`, clears `fa
 
 The Workflow reloads every closed incident referencing the proposal. If the Workflow cannot start, the committed proposal state remains and the request returns `503`; the client can retrieve the current ETag and retry the request. A successful start returns `202 Accepted` with the updated proposal and ETag.
 
-`failure_reason` is a safe application-generated message. It must explain the failure without exposing internal implementation details. Starting another generation attempt clears it; the earlier failure remains in the audit trail.
+`failure_reason` is a safe application-generated message. It must explain the failure without exposing internal implementation details. Starting another generation attempt clears it.
 
 ### 3.3 Understand the editable draft
 
@@ -379,7 +379,7 @@ Replaces the complete draft shown above; partial updates are not supported. The 
 
 The proposal must be `pending_review`. An `updating` proposal returns `409` with code `proposal_updating`; a `failed` proposal returns `409` with code `proposal_generation_failed`; a `no_change` proposal returns `409` with code `proposal_not_reviewable`; a decided proposal returns `409` with code `proposal_already_decided`.
 
-The server validates the request against the complete draft rules above and replaces the stored draft in one transaction. It increments `revision`, updates `updated_at`, and records an audit event. A draft with no changes moves the proposal to `no_change`; otherwise it remains `pending_review`.
+The server validates the request against the complete draft rules above and replaces the stored draft in one transaction. It increments `revision` and updates `updated_at`. A draft with no changes moves the proposal to `no_change`; otherwise it remains `pending_review`.
 
 Returns the complete updated proposal with its new `ETag`.
 

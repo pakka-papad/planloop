@@ -526,31 +526,6 @@ test("retries failed generation once for concurrent requests with the same ETag"
     failure_reason: null,
     revision: 3,
   })
-
-  const env = await worker.getEnv()
-  const auditEvents = await env.DB.prepare(
-    `SELECT event_type, entity_type, entity_id, details_json
-     FROM audit_events
-     WHERE entity_id = ?`,
-  )
-    .bind(PROPOSALS.failed)
-    .all<{
-      event_type: string
-      entity_type: string
-      entity_id: string
-      details_json: string
-    }>()
-
-  expect(auditEvents.results).toHaveLength(1)
-  expect(auditEvents.results[0]).toMatchObject({
-    event_type: "review_proposal_generation_retried",
-    entity_type: "review_proposal",
-    entity_id: PROPOSALS.failed,
-  })
-  expect(JSON.parse(auditEvents.results[0]?.details_json ?? "null")).toEqual({
-    failure_reason: "Proposal generation did not complete. Try again.",
-    revision: 2,
-  })
 })
 
 test("restarts fresh updating generation without changing the revision", async () => {
@@ -591,19 +566,6 @@ test("restarts stale updating generation with a new revision", async () => {
     id: PROPOSALS.updating,
     status: "updating",
     revision: 3,
-  })
-
-  const env = await worker.getEnv()
-  const audit = await env.DB.prepare(
-    "SELECT event_type, details_json FROM audit_events WHERE entity_id = ?",
-  )
-    .bind(PROPOSALS.updating)
-    .first<{ event_type: string; details_json: string }>()
-
-  expect(audit?.event_type).toBe("review_proposal_generation_retried")
-  expect(JSON.parse(audit?.details_json ?? "null")).toEqual({
-    failure_reason: null,
-    revision: 2,
   })
 })
 
@@ -670,22 +632,6 @@ test("replaces a pending proposal draft and records the revision once", async ()
     status: "pending_review",
     revision: 3,
     draft: editedPendingDraft(),
-  })
-
-  const env = await worker.getEnv()
-  const auditEvents = await env.DB.prepare(
-    `SELECT event_type, details_json
-     FROM audit_events
-     WHERE entity_id = ?`,
-  )
-    .bind(PROPOSALS.pending)
-    .all<{ event_type: string; details_json: string }>()
-
-  expect(auditEvents.results).toHaveLength(1)
-  expect(auditEvents.results[0]?.event_type).toBe("review_proposal_draft_edited")
-  expect(JSON.parse(auditEvents.results[0]?.details_json ?? "null")).toEqual({
-    revision: 3,
-    status: "pending_review",
   })
 })
 
@@ -878,18 +824,6 @@ test("approves a proposal once and publishes its draft as the next plan version"
     { id: VERSION_IDS[1], version: 1 },
     { id: body.created_plan_version.id, version: 2 },
   ])
-
-  const audit = await env.DB.prepare(
-    `SELECT event_type, details_json FROM audit_events WHERE entity_id = ?`,
-  )
-    .bind(PROPOSALS.pending)
-    .first<{ event_type: string; details_json: string }>()
-
-  expect(audit?.event_type).toBe("review_proposal_approved")
-  expect(JSON.parse(audit?.details_json ?? "null")).toEqual({
-    revision: 3,
-    created_plan_version_id: body.created_plan_version.id,
-  })
 })
 
 test("does not approve a proposal whose source plan version was superseded", async () => {
