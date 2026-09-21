@@ -8,20 +8,19 @@ Base path: `/api/v1`
 PlanLoop follows one linear loop:
 
 ```text
-Action plans → Plan suggestion → Incident response → Incident closure
-    ↑                                                    ↓
+Action plans → Incident response → Incident closure
+    ↑                                    ↓
 New version ← Reviewer approval ← Suggested plan changes
 ```
 
 The API follows that same order:
 
 1. Create and read approved action plans.
-2. Suggest a plan for reported symptoms.
-3. Start an incident pinned to the selected plan version.
-4. Record whether each step was completed, skipped, or modified, plus any additional actions.
-5. Close the incident; deviations create or update the plan's active proposal.
-6. Review or edit the changes aggregated from its contributing incidents.
-7. Approve the proposal to publish a new immutable plan version, or reject it.
+2. Start an incident pinned to the selected plan version.
+3. Record whether each step was completed, skipped, or modified, plus any additional actions.
+4. Close the incident; deviations create or update the plan's active proposal.
+5. Review or edit the changes aggregated from its contributing incidents.
+6. Approve the proposal to publish a new immutable plan version, or reject it.
 
 ## 1. Action plans
 
@@ -96,47 +95,9 @@ Returns the complete action plan.
 
 Historical versions do not have a separate browsing endpoint. An incident embeds its pinned version, and a review proposal embeds its source version.
 
-## 2. Suggest an action plan
+## 2. Respond to an incident
 
-After an engineer describes the symptoms, the API ranks current approved plans. The engineer still chooses which plan to use.
-
-### `POST /action-plan-suggestions`
-
-```json
-{
-  "symptoms": "Authentication errors are rising across checkout and account services.",
-  "limit": 3
-}
-```
-
-Constraints:
-
-- `symptoms`: required, 1–4000 characters.
-- `limit`: optional integer from 1 to 5; default 3.
-
-The server considers only current approved plan versions. It returns at most `limit` matches with a score of at least `0.60`, ordered by score descending. It does not persist or select a plan.
-
-```json
-{
-  "suggestions": [
-    {
-      "plan_id": "0199aa00-1111-4000-8000-000000000011",
-      "plan_version_id": "0199aa00-1111-4000-8000-000000000010",
-      "version": 1,
-      "name": "Elevated authentication errors",
-      "use_when": "Use when authentication errors rise across one or more services.",
-      "match_score": 0.91,
-      "reason": "The plan covers authentication errors affecting multiple services."
-    }
-  ]
-}
-```
-
-`match_score` is from 0 to 1 with at most three decimal places and is not a statistical probability. `reason` is 1–500 characters. No qualifying match returns an empty array. Suggestion generation failure returns `503` with code `plan_suggestion_unavailable`.
-
-## 3. Respond to an incident
-
-### 3.1 Start an incident
+### 2.1 Start an incident
 
 #### `POST /incidents`
 
@@ -156,9 +117,9 @@ Constraints:
 - `symptoms`: required, 1–4000 characters.
 - `plan_version_id`: required UUIDv4 and must be a current approved version.
 - An unknown `plan_version_id` returns `422` with a field validation error.
-- A version superseded between suggestion and incident creation returns `409` with code `plan_version_superseded` and the current version ID in `current_version_id`.
+- A plan version that is no longer current returns `409` with code `plan_version_superseded` and the current version ID in `current_version_id`.
 
-The server pins the supplied version permanently and creates an open incident with `review_proposal_id: null`. It does not run plan suggestion again.
+The server pins the supplied version permanently and creates an open incident with `review_proposal_id: null`.
 
 Returns `201 Created`, the complete incident, and `Location: /api/v1/incidents/{incident_id}`.
 
@@ -178,7 +139,7 @@ An incident contains:
 | `closed_at` | timestamp or null | Set by the server when the incident is closed; otherwise `null`. |
 | `closed_by` | string or null | Server-owned actor ID. |
 
-### 3.2 Open or find an incident
+### 2.2 Open or find an incident
 
 #### `GET /incidents/{incident_id}`
 
@@ -188,7 +149,7 @@ Returns the complete incident, pinned plan version with ordered steps, and all a
 
 Lists incidents for navigation. It accepts `status=open|closed`, `limit`, and `cursor`; omitting `status` returns both states. Results are ordered by `created_at` descending. List items omit plan steps and action records.
 
-### 3.3 Record what happened
+### 2.3 Record what happened
 
 During an open incident, engineers append action records rather than editing the pinned plan. Before closure, every pinned step must have at least one action record, and actions absent from the plan are recorded separately.
 
@@ -231,7 +192,7 @@ The incident must be open. A closed incident returns `409` with code `incident_c
 
 Returns `201 Created` with the complete action record.
 
-### 3.4 Close the incident and start learning
+### 2.4 Close the incident and start learning
 
 #### `PUT /incidents/{incident_id}/closure`
 
@@ -265,7 +226,7 @@ An action plan may have at most one active proposal, where active means `updatin
 
 If generation exhausts its automatic retries, the proposal moves to `failed`, records a safe human-readable `failure_reason`, and increments its revision. It retains its previous valid draft, if any. Each incident may reference at most one review proposal.
 
-## 4. Review suggested changes and publish
+## 3. Review suggested changes and publish
 
 When proposal generation is ready, a reviewer sees the source plan, all contributing incidents, cited evidence, and one suggested replacement plan. Editing affects only the pending proposal. It never changes an approved plan directly.
 
@@ -325,7 +286,7 @@ stateDiagram-v2
     Rejected --> [*]
 ```
 
-### 4.1 Find review proposals
+### 3.1 Find review proposals
 
 #### `GET /review-proposals`
 
@@ -335,7 +296,7 @@ Accepts `status=updating|pending_review|failed|no_change|approved|rejected`, `li
 
 Returns the complete proposal, source plan, contributing incidents, cited evidence, and draft. It includes a strong `ETag` derived from the proposal ID and revision.
 
-### 4.2 Start or retry generation
+### 3.2 Start or retry generation
 
 #### `POST /review-proposals/{proposal_id}/generation-attempts`
 
@@ -347,7 +308,7 @@ The Workflow reloads every closed incident referencing the proposal. If the Work
 
 `failure_reason` is a safe application-generated message. It must explain the failure without exposing internal implementation details. Starting another generation attempt clears it; the earlier failure remains in the audit trail.
 
-### 4.3 Understand the editable draft
+### 3.3 Understand the editable draft
 
 `fields` and `proposed_step_position` are included only for the change types that require them below. The server validates them against the source and proposed plans. For `add_step`, `proposed_step_position` identifies the new proposed step described by the change.
 
@@ -410,7 +371,7 @@ Change types:
 
 Adding or removing a step may shift later numeric positions without move changes. `move_step` is required only when the relative order of retained source steps changes.
 
-### 4.4 Edit the suggested changes
+### 3.4 Edit the suggested changes
 
 #### `PUT /review-proposals/{proposal_id}/draft`
 
@@ -422,7 +383,7 @@ The server validates the request against the complete draft rules above and repl
 
 Returns the complete updated proposal with its new `ETag`.
 
-### 4.5 Approve and publish, or reject
+### 3.5 Approve and publish, or reject
 
 #### `PUT /review-proposals/{proposal_id}/decision`
 
@@ -448,7 +409,7 @@ Adding an incident and deciding a proposal are serialized. If the Workflow updat
 
 Returns the complete decided proposal with its new `ETag`. `created_plan_version` is populated only after approval.
 
-## 5. Shared API rules
+## 4. Shared API rules
 
 - Requests and responses use UTF-8 JSON and `snake_case` field names.
 - Unknown request fields return `422 Unprocessable Content`.

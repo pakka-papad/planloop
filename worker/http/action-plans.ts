@@ -57,21 +57,6 @@ export interface ActionPlanSummaryDto {
   }
 }
 
-export interface SuggestActionPlanRequest {
-  readonly symptoms: string
-  readonly limit?: number
-}
-
-export interface ActionPlanSuggestionDto {
-  readonly plan_id: string
-  readonly plan_version_id: string
-  readonly version: number
-  readonly name: string
-  readonly use_when: string
-  readonly match_score: number
-  readonly reason: string
-}
-
 export async function handleListActionPlans(
   request: Request,
   database: D1Database,
