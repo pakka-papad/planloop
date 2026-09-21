@@ -2,6 +2,10 @@
 
 *A full-stack incident-response system that turns operational evidence into human-reviewed action-plan improvements.*
 
+Read the [product workflow](docs/product-workflow.md) for the end-to-end user journey.
+
+![PlanLoop home page](docs/screenshots/14-home.png)
+
 ---
 
 ## Quick Start (Local Development)
@@ -182,5 +186,6 @@ flowchart LR
 
 ## Documentation
 
+- [Product workflow](docs/product-workflow.md)
 - [API RFC](docs/apis/planloop-api-rfc.md)
 - [Known product gaps](docs/known-product-gaps.md)
