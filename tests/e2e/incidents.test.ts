@@ -1,5 +1,10 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "vitest"
 
+import {
+  expectProblemResponse,
+  expectUtcTimestamp,
+  expectUuidV4,
+} from "../support/assertions"
 import { incidentFixtureStatements } from "../support/database-fixtures"
 import {
   createPlanLoopTestHarness,
@@ -209,10 +214,8 @@ test("creates an open incident pinned to the selected current plan version", asy
     closed_at: null,
     closed_by: null,
   })
-  expect(incident.id).toMatch(
-    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
-  )
-  expect(incident.created_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
+  expectUuidV4(incident.id)
+  expectUtcTimestamp(incident.created_at)
 
   const env = await worker.getEnv()
   await env.DB.batch([
@@ -293,9 +296,7 @@ test("rejects a superseded action plan version", async () => {
     }),
   })
 
-  expect(response.status).toBe(409)
-  expect(await response.json()).toMatchObject({
-    code: "plan_version_superseded",
+  expect(await expectProblemResponse(response, 409, "plan_version_superseded")).toMatchObject({
     current_version_id: CURRENT_VERSION_ID,
   })
 })
@@ -311,9 +312,7 @@ test("rejects an unknown action plan version", async () => {
     }),
   })
 
-  expect(response.status).toBe(422)
-  expect(await response.json()).toMatchObject({
-    code: "validation_error",
+  expect(await expectProblemResponse(response, 422, "validation_error")).toMatchObject({
     errors: [
       {
         field: "plan_version_id",
@@ -329,9 +328,7 @@ test.each([
 ])("returns not found for incident %s", async (incidentId) => {
   const response = await server.fetch(`/api/v1/incidents/${incidentId}`)
 
-  expect(response.status).toBe(404)
-  expect(await response.json()).toMatchObject({
-    code: "not_found",
+  expect(await expectProblemResponse(response, 404, "not_found")).toMatchObject({
     detail: "The requested incident does not exist.",
   })
 })
@@ -364,10 +361,8 @@ test("adds step and additional-action records to an open incident", async () => 
     reason: null,
     recorded_by: null,
   })
-  expect(stepRecord.id).toMatch(
-    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
-  )
-  expect(stepRecord.recorded_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
+  expectUuidV4(stepRecord.id)
+  expectUtcTimestamp(stepRecord.recorded_at)
 
   const additionalResponse = await server.fetch(
     `/api/v1/incidents/${FIRST_INCIDENT_ID}/action-records`,
@@ -456,8 +451,7 @@ test("rejects action records for a closed incident", async () => {
     },
   )
 
-  expect(response.status).toBe(409)
-  expect(await response.json()).toMatchObject({ code: "incident_closed" })
+  await expectProblemResponse(response, 409, "incident_closed")
 })
 
 test("rejects a step outside the incident's pinned plan version", async () => {
@@ -476,9 +470,7 @@ test("rejects a step outside the incident's pinned plan version", async () => {
     },
   )
 
-  expect(response.status).toBe(422)
-  expect(await response.json()).toMatchObject({
-    code: "validation_error",
+  expect(await expectProblemResponse(response, 422, "validation_error")).toMatchObject({
     errors: [{ field: "plan_step_id" }],
   })
 })
@@ -514,8 +506,7 @@ test.each([
     },
   )
 
-  expect(response.status).toBe(422)
-  expect(await response.json()).toMatchObject({ code: "validation_error" })
+  await expectProblemResponse(response, 422, "validation_error")
 })
 
 test("lists incidents in stable pages without plan steps or action records", async () => {
@@ -591,9 +582,7 @@ test.each([
 ])("rejects an invalid incident-list %s", async (field, path) => {
   const response = await server.fetch(path)
 
-  expect(response.status).toBe(422)
-  expect(await response.json()).toMatchObject({
-    code: "validation_error",
+  expect(await expectProblemResponse(response, 422, "validation_error")).toMatchObject({
     errors: [{ field }],
   })
 })
@@ -607,9 +596,9 @@ test("rejects closure while pinned plan steps are unrecorded", async () => {
     { method: "PUT" },
   )
 
-  expect(response.status).toBe(409)
-  expect(await response.json()).toMatchObject({
-    code: "incident_has_unrecorded_steps",
+  expect(
+    await expectProblemResponse(response, 409, "incident_has_unrecorded_steps"),
+  ).toMatchObject({
     unrecorded_plan_step_ids: [
       "0199c200-0002-4000-8000-000000000001",
       "0199c200-0002-4000-8000-000000000002",
@@ -643,10 +632,7 @@ test("returns 503 after closing an incident when workflow dispatch is unavailabl
       { method: "PUT" },
     )
 
-    expect(closeResponse.status).toBe(503)
-    expect(await closeResponse.json()).toMatchObject({
-      code: "workflow_unavailable",
-    })
+    await expectProblemResponse(closeResponse, 503, "workflow_unavailable")
 
     const incidentResponse = await server.fetch(
       `/api/v1/incidents/${FIRST_INCIDENT_ID}`,
@@ -711,9 +697,7 @@ test("closes an incident without a proposal when the plan was followed", async (
     closed_by: null,
     review_proposal_id: null,
   })
-  expect(closure.closed_at).toMatch(
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
-  )
+  expectUtcTimestamp(closure.closed_at)
 
   const retryResponse = await server.fetch(
     `/api/v1/incidents/${FIRST_INCIDENT_ID}/closure`,
@@ -794,9 +778,7 @@ test("aggregates repeated and out-of-order actions into the active proposal", as
   }
 
   expect(firstResponse.status).toBe(200)
-  expect(firstClosure.review_proposal_id).toMatch(
-    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
-  )
+  expectUuidV4(firstClosure.review_proposal_id)
 
   const secondResponse = await server.fetch(
     `/api/v1/incidents/${THIRD_INCIDENT_ID}/closure`,

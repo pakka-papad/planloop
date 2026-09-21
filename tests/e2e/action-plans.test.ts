@@ -1,13 +1,16 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "vitest"
 
+import {
+  expectProblemResponse,
+  expectUtcTimestamp,
+  expectUuidV4,
+} from "../support/assertions"
 import { createPlanLoopTestHarness } from "../support/harness"
 
 const PLAN_ID = "0199b000-0001-4000-8000-000000000001"
 const CURRENT_VERSION_ID = "0199b100-0001-4000-8000-000000000002"
 const PAYMENT_PLAN_ID = "0199b000-0002-4000-8000-000000000002"
 const KAFKA_PLAN_ID = "0199b000-0003-4000-8000-000000000003"
-const UTC_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
-
 function encodedCursor(value: unknown): string {
   return Buffer.from(JSON.stringify(value)).toString("base64url")
 }
@@ -263,15 +266,11 @@ test("creates an approved action plan and persists its ordered steps", async () 
       ],
     },
   })
-  expect(created.created_at).toMatch(UTC_TIMESTAMP)
-  expect(new Date(created.created_at).toISOString()).toBe(created.created_at)
-  expect(created.current_version.approved_at).toMatch(UTC_TIMESTAMP)
-  expect(new Date(created.current_version.approved_at).toISOString()).toBe(
-    created.current_version.approved_at,
-  )
+  expectUtcTimestamp(created.created_at)
+  expectUtcTimestamp(created.current_version.approved_at)
   expect(created.created_at).toBe(created.current_version.approved_at)
-  expect(created.id).toMatch(/^[0-9a-f-]{36}$/)
-  expect(created.current_version.id).toMatch(/^[0-9a-f-]{36}$/)
+  expectUuidV4(created.id)
+  expectUuidV4(created.current_version.id)
   expect(new Set(created.current_version.steps.map((step) => step.id))).toHaveLength(2)
 
   const getResponse = await server.fetch(response.headers.get("location") ?? "")
@@ -286,8 +285,7 @@ test("rejects malformed JSON when creating an action plan", async () => {
     body: "{",
   })
 
-  expect(response.status).toBe(400)
-  expect(await response.json()).toMatchObject({ code: "invalid_json" })
+  await expectProblemResponse(response, 400, "invalid_json")
 })
 
 test("rejects invalid action-plan fields", async () => {
@@ -302,9 +300,7 @@ test("rejects invalid action-plan fields", async () => {
     }),
   })
 
-  expect(response.status).toBe(422)
-  expect(await response.json()).toMatchObject({
-    code: "validation_error",
+  expect(await expectProblemResponse(response, 422, "validation_error")).toMatchObject({
     errors: expect.arrayContaining([
       expect.objectContaining({ field: "name", message: "Must not be empty." }),
       expect.objectContaining({
@@ -407,9 +403,7 @@ test.each([
 ])("rejects an invalid %s", async (field, path) => {
   const response = await server.fetch(path)
 
-  expect(response.status).toBe(422)
-  expect(await response.json()).toMatchObject({
-    code: "validation_error",
+  expect(await expectProblemResponse(response, 422, "validation_error")).toMatchObject({
     errors: [{ field: field.startsWith("cursor") ? "cursor" : field }],
   })
 })
@@ -419,9 +413,7 @@ test("returns an RFC problem for an unknown action plan", async () => {
     "/api/v1/action-plans/0199b000-9999-4000-8000-000000000999",
   )
 
-  expect(response.status).toBe(404)
-  expect(response.headers.get("content-type")).toBe("application/problem+json")
-  expect(await response.json()).toEqual({
+  expect(await expectProblemResponse(response, 404, "not_found")).toEqual({
     type: "urn:planloop:problem:not-found",
     title: "Resource not found",
     status: 404,

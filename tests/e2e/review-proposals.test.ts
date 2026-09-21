@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "vitest"
 
+import { expectProblemResponse } from "../support/assertions"
 import { incidentFixtureStatements } from "../support/database-fixtures"
 import {
   createPlanLoopTestHarness,
@@ -679,7 +680,7 @@ test.each([
 ])("returns 404 for an unknown review proposal: %s", async (proposalId) => {
   const response = await server.fetch(`/api/v1/review-proposals/${proposalId}`)
 
-  expect(response.status).toBe(404)
+  await expectProblemResponse(response, 404, "not_found")
 })
 
 test("retries failed generation once for concurrent requests with the same ETag", async () => {
@@ -717,8 +718,7 @@ test("returns 503 and records failure when generation retry cannot dispatch", as
       },
     )
 
-    expect(response.status).toBe(503)
-    expect(await response.json()).toMatchObject({ code: "workflow_unavailable" })
+    await expectProblemResponse(response, 503, "workflow_unavailable")
 
     const proposalResponse = await server.fetch(
       `/api/v1/review-proposals/${PROPOSALS.failed}`,
@@ -813,8 +813,7 @@ test.each([
     { method: "POST", headers },
   )
 
-  expect(response.status).toBe(status)
-  expect(await response.json()).toMatchObject({ code })
+  await expectProblemResponse(response, status, code)
 })
 
 test("replaces a pending proposal draft and records the revision once", async () => {
@@ -941,8 +940,7 @@ test.each([
     },
   )
 
-  expect(response.status).toBe(409)
-  expect(await response.json()).toMatchObject({ code })
+  await expectProblemResponse(response, 409, code)
 })
 
 test.each([
@@ -971,8 +969,7 @@ test.each([
     },
   )
 
-  expect(response.status).toBe(status)
-  expect(await response.json()).toMatchObject({ code })
+  await expectProblemResponse(response, status, code)
 })
 
 test("rejects a draft whose changes do not describe its plan differences", async () => {
@@ -989,9 +986,7 @@ test("rejects a draft whose changes do not describe its plan differences", async
     },
   )
 
-  expect(response.status).toBe(422)
-  expect(await response.json()).toMatchObject({
-    code: "validation_error",
+  expect(await expectProblemResponse(response, 422, "validation_error")).toMatchObject({
     errors: [{ field: "body", message: "missing changes: add:2" }],
   })
 })
@@ -1115,10 +1110,7 @@ test("does not approve a proposal whose source plan version was superseded", asy
     },
   )
 
-  expect(response.status).toBe(409)
-  expect(await response.json()).toMatchObject({
-    code: "source_plan_version_superseded",
-  })
+  await expectProblemResponse(response, 409, "source_plan_version_superseded")
 
   const planResponse = await server.fetch(`/api/v1/action-plans/${PLAN_IDS[1]}`)
   expect(planResponse.status).toBe(200)
@@ -1211,8 +1203,7 @@ test.each([
     },
   )
 
-  expect(response.status).toBe(status)
-  expect(await response.json()).toMatchObject({ code })
+  await expectProblemResponse(response, status, code)
 })
 
 test("filters by one status", async () => {
@@ -1269,5 +1260,5 @@ test.each([
 ])("rejects an invalid query: %s", async (query) => {
   const response = await server.fetch(`/api/v1/review-proposals?${query}`)
 
-  expect(response.status).toBe(422)
+  await expectProblemResponse(response, 422, "validation_error")
 })
