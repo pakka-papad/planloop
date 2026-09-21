@@ -10,7 +10,7 @@ export function createPlanLoopTestHarness() {
           GENERATE_REVIEW_PROPOSAL_WORKFLOW: "planloop-test-bindings",
         },
       },
-      { configPath: "./tests/e2e/mock-bindings.wrangler.jsonc" },
+      { configPath: "./tests/support/mock-bindings.wrangler.jsonc" },
     ],
   })
 }

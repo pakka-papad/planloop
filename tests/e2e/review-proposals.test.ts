@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "vitest"
 
-import { createPlanLoopTestHarness } from "./harness"
+import { createPlanLoopTestHarness } from "../support/harness"
 
 const PLAN_IDS = [
   "0199d000-0001-4000-8000-000000000001",

@@ -13,7 +13,7 @@ import {
 import { saveGeneratedProposalDraft } from "../../worker/persistence/review-proposal-drafts"
 import { findReviewProposalById } from "../../worker/persistence/review-proposals"
 import * as v from "valibot"
-import { createPlanLoopTestHarness } from "./harness"
+import { createPlanLoopTestHarness } from "../support/harness"
 
 const PLAN_ID = "0199f000-0001-4000-8000-000000000001"
 const VERSION_ID = "0199f100-0001-4000-8000-000000000001"

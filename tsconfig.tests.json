@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.e2e.tsbuildinfo",
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.tests.tsbuildinfo",
     "target": "ES2023",
     "lib": ["ES2023"],
     "module": "ESNext",
@@ -15,5 +15,5 @@
     "skipLibCheck": true,
     "types": ["node", "vitest/globals", "./worker-configuration.d.ts"]
   },
-  "include": ["tests/e2e", "vitest.e2e.config.ts", "worker-configuration.d.ts"]
+  "include": ["tests", "vitest.config.ts", "worker-configuration.d.ts"]
 }
