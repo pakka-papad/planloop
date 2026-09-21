@@ -2,16 +2,13 @@ import {
   ArrowClockwiseIcon,
   ArrowLeftIcon,
   ArrowRightIcon,
-  CheckCircleIcon,
 } from "@phosphor-icons/react"
 import { useEffect, useState } from "react"
 
 import { errorMessage, isAbortError } from "../api/client"
-import type { ActionRecord } from "../api/incidents"
 import {
   getReviewProposal,
   retryReviewProposalGeneration,
-  type ProposalChange,
   type ReviewProposal,
   type ReviewProposalStatus,
   type VersionedReviewProposal,
@@ -205,10 +202,6 @@ function ProposalView({
   readonly retryError: string | null
 }) {
   const presentation = statusPresentation[proposal.status]
-  const evidenceById = new Map(proposal.evidence.map((record) => [record.id, record]))
-  const incidentById = new Map(
-    proposal.contributing_incidents.map((incident) => [incident.id, incident]),
-  )
 
   return (
     <div className="mt-8 space-y-6">
@@ -297,20 +290,12 @@ function ProposalView({
       </header>
 
       {proposal.draft ? (
-        <>
-          <ReviewProposalEditor
-            etag={etag}
-            key={proposal.revision}
-            onSaved={onProposalUpdated}
-            proposal={proposal}
-          />
-          <Changes
-            changes={proposal.draft.changes}
-            evidenceById={evidenceById}
-            incidentById={incidentById}
-            proposal={proposal}
-          />
-        </>
+        <ReviewProposalEditor
+          etag={etag}
+          key={proposal.revision}
+          onSaved={onProposalUpdated}
+          proposal={proposal}
+        />
       ) : (
         <section className="rounded-xl border bg-card p-8 text-center">
           <h2 className="text-lg font-semibold">No generated draft yet</h2>
@@ -323,139 +308,6 @@ function ProposalView({
       <ContributingIncidents proposal={proposal} />
     </div>
   )
-}
-
-function Changes({
-  changes,
-  evidenceById,
-  incidentById,
-  proposal,
-}: {
-  readonly changes: readonly ProposalChange[]
-  readonly evidenceById: ReadonlyMap<string, ActionRecord>
-  readonly incidentById: ReadonlyMap<string, ReviewProposal["contributing_incidents"][number]>
-  readonly proposal: ReviewProposal
-}) {
-  return (
-    <section className="rounded-xl border bg-card p-6 sm:p-8" aria-labelledby="changes-heading">
-      <div className="flex flex-wrap items-baseline justify-between gap-3">
-        <div>
-          <p className="text-sm font-semibold text-primary">Review draft</p>
-          <h2 className="mt-1 text-2xl font-semibold tracking-tight" id="changes-heading">
-            Proposed changes
-          </h2>
-        </div>
-        <span className="text-sm text-muted-foreground">
-          {changes.length} {changes.length === 1 ? "change" : "changes"}
-        </span>
-      </div>
-
-      {changes.length === 0 ? (
-        <div className="mt-6 rounded-lg bg-muted/50 p-5">
-          <div className="flex items-center gap-2">
-            <CheckCircleIcon aria-hidden="true" className="text-primary" size={18} />
-            <p className="font-semibold">No plan changes recommended</p>
-          </div>
-          <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            The proposed plan matches the source plan.
-          </p>
-        </div>
-      ) : (
-        <ol className="mt-6 space-y-4">
-          {changes.map((change, index) => {
-            const evidence = change.action_record_ids.flatMap((id) => {
-              const record = evidenceById.get(id)
-              return record === undefined ? [] : [record]
-            })
-
-            return (
-              <li className="rounded-lg border p-5" key={`${change.type}-${index}`}>
-                <div className="flex gap-3">
-                  <span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
-                    {index + 1}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <h3 className="font-semibold leading-6">
-                      {changeTitle(change, proposal)}
-                    </h3>
-                    <p className="mt-2 text-sm leading-6 text-muted-foreground">{change.rationale}</p>
-
-                    {evidence.length > 0 ? (
-                      <div className="mt-4">
-                        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          Cited evidence
-                        </p>
-                        <ul className="mt-2 space-y-2">
-                          {evidence.map((record) => {
-                            const incident = incidentById.get(record.incident_id)
-
-                            return (
-                              <li className="rounded-md bg-muted/50 p-3" key={record.id}>
-                                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                                  <span className="font-semibold">{recordTypeLabel(record.type)} · Action {record.sequence}</span>
-                                  {incident ? (
-                                    <AppLink className="font-semibold text-primary" href={`/incidents/${incident.id}`}>
-                                      {incident.title}
-                                    </AppLink>
-                                  ) : null}
-                                </div>
-                                {record.details ? (
-                                  <p className="mt-2 text-sm leading-6">{record.details}</p>
-                                ) : null}
-                                {record.reason ? (
-                                  <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                                    <span className="font-medium">Reason:</span> {record.reason}
-                                  </p>
-                                ) : null}
-                              </li>
-                            )
-                          })}
-                        </ul>
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-              </li>
-            )
-          })}
-        </ol>
-      )}
-    </section>
-  )
-}
-
-function changeTitle(change: ProposalChange, proposal: ReviewProposal): string {
-  const sourceStep = "source_step_id" in change
-    ? proposal.source_plan_version.steps.find((step) => step.id === change.source_step_id)
-    : undefined
-
-  switch (change.type) {
-    case "add_step": {
-      const step = proposal.draft?.proposed_plan.steps[change.proposed_step_position - 1]
-      return step ? `Add step ${change.proposed_step_position}: ${step.title}` : "Add a step"
-    }
-    case "update_step":
-      return `Update ${sourceStep?.title ?? "a plan step"}`
-    case "move_step":
-      return `Move ${sourceStep?.title ?? "a plan step"} to position ${change.proposed_step_position}`
-    case "remove_step":
-      return `Remove ${sourceStep?.title ?? "a plan step"}`
-    case "update_plan_details":
-      return `Update ${change.fields.map(planFieldLabel).join(" and ")}`
-  }
-}
-
-function planFieldLabel(field: "name" | "use_when"): string {
-  return field === "name" ? "plan name" : "usage guidance"
-}
-
-function recordTypeLabel(type: ActionRecord["type"]): string {
-  switch (type) {
-    case "step_completed": return "Step completed"
-    case "step_skipped": return "Step skipped"
-    case "step_modified": return "Step modified"
-    case "additional_action": return "Additional action"
-  }
 }
 
 function ContributingIncidents({ proposal }: { readonly proposal: ReviewProposal }) {

@@ -22,6 +22,7 @@ import {
   ReviewProposalEvidenceDialog,
   type EvidenceIncident,
 } from "./ReviewProposalEvidenceDialog"
+import { ReviewProposalChangeDialog } from "./ReviewProposalChangeDialog"
 
 interface EditableStep extends ProposedPlanStep {
   readonly key: string
@@ -491,6 +492,9 @@ function PlanComparison({
     ? baseChanges
     : deriveChanges(proposal.source_plan_version, normalized(edit.candidate), initial.evidence)
   const activeTargetKeys = edit === null ? [] : targetKeys(edit, candidateChanges)
+  const planDetailsChange = baseChanges
+    .map(({ change }) => change)
+    .find((change) => change.type === "update_plan_details")
 
   return (
     <section aria-labelledby="plan-comparison-heading">
@@ -508,6 +512,7 @@ function PlanComparison({
             ? restoreSourceStep
             : undefined}
           plan={proposal.source_plan_version}
+          proposal={proposal}
         />
         <article className="overflow-hidden rounded-xl border border-primary/30 bg-card">
           <header className="border-b p-6">
@@ -541,8 +546,8 @@ function PlanComparison({
             ) : (
               <div className="group mt-3 flex items-center gap-2">
                 <h3 className="text-xl font-semibold tracking-tight">{initial.state.name}</h3>
-                {baseChanges.some(({ change }) => change.type === "update_plan_details") ? (
-                  <ChangeBadge label="Updated" />
+                {planDetailsChange?.type === "update_plan_details" && planDetailsChange.fields.includes("name") ? (
+                  <ChangePill change={planDetailsChange} label="Updated" proposal={proposal} />
                 ) : null}
                 {editable && edit === null ? (
                   <EditButton label="Edit plan name" onClick={() => startEdit("name", initial.state, null)} />
@@ -581,7 +586,12 @@ function PlanComparison({
               <div className="group mt-5 rounded-lg bg-muted/50 p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Use when</p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Use when</p>
+                      {planDetailsChange?.type === "update_plan_details" && planDetailsChange.fields.includes("use_when") ? (
+                        <ChangePill change={planDetailsChange} label="Updated" proposal={proposal} />
+                      ) : null}
+                    </div>
                     <p className="mt-2 text-sm leading-6">{initial.state.useWhen}</p>
                   </div>
                   {editable && edit === null ? (
@@ -595,10 +605,15 @@ function PlanComparison({
           <ol className="divide-y px-6">
             {displayState.steps.map((step, index) => {
               const editingStep = edit?.stepKey === step.key
-              const labels = stepChangeLabels(step, baseChanges.map(({ change }) => change), "proposed")
+              const changes = stepChanges(
+                step,
+                baseChanges.map(({ change }) => change),
+                "proposed",
+                index + 1,
+              )
 
               return (
-                <li className="group relative grid gap-3 py-5 sm:grid-cols-[2.25rem_minmax(0,1fr)]" key={step.key}>
+                <li className="group grid gap-3 py-5 sm:grid-cols-[2.25rem_minmax(0,1fr)]" key={step.key}>
                   <span className="grid size-8 place-items-center rounded-full border bg-background text-xs font-semibold text-primary">
                     {index + 1}
                   </span>
@@ -616,14 +631,16 @@ function PlanComparison({
                       step={step}
                     />
                   ) : (
-                    <div className="min-w-0">
+                    <div className="min-w-0 sm:grid sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-x-3">
                       <div className="flex flex-wrap items-center gap-2">
                         <h4 className="text-sm font-semibold leading-5">{step.title}</h4>
-                        {labels.map((label) => <ChangeBadge key={label} label={label} />)}
+                        {changes.map(({ change, label }) => (
+                          <ChangePill change={change} key={`${change.type}-${label}`} label={label} proposal={proposal} />
+                        ))}
                       </div>
-                      <p className="mt-2 text-xs leading-5 text-muted-foreground">{step.description}</p>
+                      <p className="mt-2 text-xs leading-5 text-muted-foreground sm:col-span-2 sm:row-start-2">{step.description}</p>
                       {editable && edit === null ? (
-                        <div className="absolute right-0 top-4 flex rounded-md border bg-card p-0.5 opacity-100 shadow-sm sm:opacity-0 sm:transition-opacity sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
+                        <div className="mt-3 ml-auto flex w-fit rounded-md border bg-card p-0.5 shadow-sm sm:col-start-2 sm:row-start-1 sm:mt-0 sm:self-start sm:opacity-0 sm:transition-opacity sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
                           <IconButton disabled={index === 0} label={`Move step ${index + 1} up`} onClick={() => moveStep(step.key, -1)}>
                             <ArrowUpIcon aria-hidden="true" size={15} />
                           </IconButton>
@@ -709,11 +726,13 @@ function SourcePlanPanel({
   isSaving,
   onRestore,
   plan,
+  proposal,
 }: {
   readonly changes: readonly ProposalChange[]
   readonly isSaving: boolean
   readonly onRestore?: (step: PlanVersion["steps"][number]) => void
   readonly plan: PlanVersion
+  readonly proposal: ReviewProposal
 }) {
   return (
     <article className="overflow-hidden rounded-xl border bg-card">
@@ -732,8 +751,8 @@ function SourcePlanPanel({
       </header>
       <ol className="divide-y px-6">
         {plan.steps.map((step) => {
-          const labels = stepChangeLabels(step, changes, "source")
-          const removed = labels.includes("Removed")
+          const stepChangeItems = stepChanges(step, changes, "source")
+          const removed = stepChangeItems.some(({ change }) => change.type === "remove_step")
 
           return (
             <li className="group relative grid gap-3 py-5 sm:grid-cols-[2.25rem_minmax(0,1fr)]" key={step.id}>
@@ -743,7 +762,9 @@ function SourcePlanPanel({
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <h4 className="text-sm font-semibold leading-5">{step.title}</h4>
-                  {labels.map((label) => <ChangeBadge key={label} label={label} />)}
+                  {stepChangeItems.map(({ change, label }) => (
+                    <ChangePill change={change} key={`${change.type}-${label}`} label={label} proposal={proposal} />
+                  ))}
                 </div>
                 <p className="mt-2 text-xs leading-5 text-muted-foreground">{step.description}</p>
                 {removed && onRestore !== undefined ? (
@@ -955,30 +976,52 @@ interface DisplayStep {
   readonly source_step_id?: string | null
 }
 
-function stepChangeLabels(
+interface LabeledChange {
+  readonly change: ProposalChange
+  readonly label: string
+}
+
+function stepChanges(
   step: DisplayStep,
   changes: readonly ProposalChange[],
   kind: "source" | "proposed",
-): readonly string[] {
-  if (kind === "proposed" && step.source_step_id === null) return ["Added"]
+  proposedPosition?: number,
+): readonly LabeledChange[] {
+  if (kind === "proposed" && step.source_step_id === null) {
+    const added = changes.find((change) => (
+      change.type === "add_step" && change.proposed_step_position === proposedPosition
+    ))
+    return added ? [{ change: added, label: "Added" }] : []
+  }
 
   const sourceStepId = kind === "source" ? step.id : step.source_step_id
   if (sourceStepId === null || sourceStepId === undefined) return []
 
-  return changes.flatMap((change) => {
-    if (!("source_step_id" in change) || change.source_step_id !== sourceStepId) return []
+  const labeledChanges: LabeledChange[] = []
 
-    switch (change.type) {
-      case "update_step": return ["Updated"]
-      case "move_step": return ["Moved"]
-      case "remove_step": return kind === "source" ? ["Removed"] : []
-      default: return []
+  for (const change of changes) {
+    if (!("source_step_id" in change) || change.source_step_id !== sourceStepId) continue
+
+    if (change.type === "update_step") labeledChanges.push({ change, label: "Updated" })
+    if (change.type === "move_step") labeledChanges.push({ change, label: "Moved" })
+    if (change.type === "remove_step" && kind === "source") {
+      labeledChanges.push({ change, label: "Removed" })
     }
-  })
+  }
+
+  return labeledChanges
 }
 
-function ChangeBadge({ label }: { readonly label: string }) {
-  return <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[0.7rem] font-semibold text-primary">{label}</span>
+function ChangePill({
+  change,
+  label,
+  proposal,
+}: {
+  readonly change: ProposalChange
+  readonly label: string
+  readonly proposal: ReviewProposal
+}) {
+  return <ReviewProposalChangeDialog change={change} label={label} proposal={proposal} />
 }
 
 function evidenceIncident(incident: Incident): EvidenceIncident {
