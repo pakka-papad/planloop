@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "vitest"
 
+import { incidentFixtureStatements } from "../support/database-fixtures"
 import { createPlanLoopTestHarness } from "../support/harness"
 
 const PLAN_ID = "0199c000-0001-4000-8000-000000000001"
@@ -90,50 +91,50 @@ async function seedActionPlan(database: D1Database): Promise<void> {
 }
 
 async function seedIncidents(database: D1Database): Promise<void> {
-  const statement = database.prepare(
-    `INSERT INTO incidents
-       (id, title, symptoms, status, plan_version_id, review_proposal_id,
-        created_at, created_by, closed_at, closed_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  )
-
   await database.batch([
-    statement.bind(
-      FIRST_INCIDENT_ID,
-      "Authentication failures in account settings",
-      "Users cannot update account settings because token validation is failing.",
-      "open",
-      PREVIOUS_VERSION_ID,
-      null,
-      "2026-09-18T09:00:00.000Z",
-      null,
-      null,
-      null,
-    ),
-    statement.bind(
-      SECOND_INCIDENT_ID,
-      "Authentication errors during checkout",
-      "Checkout authentication errors increased in the European region.",
-      "closed",
-      CURRENT_VERSION_ID,
-      null,
-      "2026-09-19T10:00:00.000Z",
-      null,
-      "2026-09-19T11:00:00.000Z",
-      null,
-    ),
-    statement.bind(
-      THIRD_INCIDENT_ID,
-      "Authentication errors in mobile clients",
-      "Mobile clients are receiving token validation failures after sign-in.",
-      "open",
-      CURRENT_VERSION_ID,
-      null,
-      "2026-09-19T10:00:00.000Z",
-      null,
-      null,
-      null,
-    ),
+    ...incidentFixtureStatements(database, {
+      id: FIRST_INCIDENT_ID,
+      title: "Authentication failures in account settings",
+      symptoms: "Users cannot update account settings because token validation is failing.",
+      status: "open",
+      planVersionId: PREVIOUS_VERSION_ID,
+      createdAt: "2026-09-18T09:00:00.000Z",
+    }),
+    ...incidentFixtureStatements(database, {
+      id: SECOND_INCIDENT_ID,
+      title: "Authentication errors during checkout",
+      symptoms: "Checkout authentication errors increased in the European region.",
+      status: "closed",
+      planVersionId: CURRENT_VERSION_ID,
+      createdAt: "2026-09-19T10:00:00.000Z",
+      closedAt: "2026-09-19T11:00:00.000Z",
+      actionRecords: [
+        {
+          id: "0199c300-0001-4000-8000-000000000001",
+          type: "step_completed",
+          planStepId: "0199c200-0002-4000-8000-000000000001",
+          details: "Confirmed checkout impact in the European region.",
+          reason: null,
+          recordedAt: "2026-09-19T10:15:00.000Z",
+        },
+        {
+          id: "0199c300-0001-4000-8000-000000000002",
+          type: "step_completed",
+          planStepId: "0199c200-0002-4000-8000-000000000002",
+          details: "Confirmed the identity provider was operating normally.",
+          reason: null,
+          recordedAt: "2026-09-19T10:20:00.000Z",
+        },
+      ],
+    }),
+    ...incidentFixtureStatements(database, {
+      id: THIRD_INCIDENT_ID,
+      title: "Authentication errors in mobile clients",
+      symptoms: "Mobile clients are receiving token validation failures after sign-in.",
+      status: "open",
+      planVersionId: CURRENT_VERSION_ID,
+      createdAt: "2026-09-19T10:00:00.000Z",
+    }),
   ])
 }
 

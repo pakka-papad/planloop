@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "vitest"
 
+import { incidentFixtureStatements } from "../support/database-fixtures"
 import { createPlanLoopTestHarness } from "../support/harness"
 
 const PLAN_IDS = [
@@ -25,7 +26,12 @@ const PROPOSALS = {
   rejected: "0199d300-0006-4000-8000-000000000006",
 } as const
 
+const CHECKOUT_STEP_ID = "0199d200-0001-4000-8000-000000000001"
 const PAYMENT_STEP_ID = "0199d200-0002-4000-8000-000000000002"
+const KAFKA_STEP_ID = "0199d200-0003-4000-8000-000000000003"
+const AUTH_STEP_ID = "0199d200-0004-4000-8000-000000000004"
+const APPROVED_VERSION_ID = "0199d100-0001-4000-8000-000000000002"
+const APPROVED_VERSION_STEP_ID = "0199d200-0001-4000-8000-000000000002"
 const INCIDENT_ID = "0199d400-0001-4000-8000-000000000001"
 const ADDITIONAL_ACTION_ID = "0199d500-0002-4000-8000-000000000002"
 const PROPOSED_NEW_STEP_ID = "0199d600-0002-4000-8000-000000000002"
@@ -71,6 +77,18 @@ function editedPendingDraft() {
 
 async function seedReviewProposals(database: D1Database): Promise<void> {
   const statements: D1PreparedStatement[] = []
+  const names = [
+    "Elevated checkout latency",
+    "Payment authorization decline spike",
+    "Kafka consumer lag growth",
+    "Authentication error increase",
+  ] as const
+  const useWhen = [
+    "Use when checkout latency rises across production regions.",
+    "Use when valid card authorizations decline above baseline.",
+    "Use when a consumer group no longer keeps pace with traffic.",
+    "Use when authentication failures rise across services.",
+  ] as const
 
   for (const [index, planId] of PLAN_IDS.entries()) {
     const versionId = VERSION_IDS[index]
@@ -88,18 +106,8 @@ async function seedReviewProposals(database: D1Database): Promise<void> {
           versionId,
           planId,
           1,
-          [
-            "Elevated checkout latency",
-            "Payment authorization decline spike",
-            "Kafka consumer lag growth",
-            "Authentication error increase",
-          ][index],
-          [
-            "Use when checkout latency rises across production regions.",
-            "Use when valid card authorizations decline above baseline.",
-            "Use when a consumer group no longer keeps pace with traffic.",
-            "Use when authentication failures rise across services.",
-          ][index],
+          names[index],
+          useWhen[index],
           `2026-01-0${index + 1}T09:00:00.000Z`,
           null,
         ),
@@ -114,7 +122,7 @@ async function seedReviewProposals(database: D1Database): Promise<void> {
          VALUES (?, ?, ?, ?, ?)`,
       )
       .bind(
-        "0199d200-0001-4000-8000-000000000001",
+        CHECKOUT_STEP_ID,
         VERSION_IDS[0],
         1,
         "Measure customer impact",
@@ -140,22 +148,61 @@ async function seedReviewProposals(database: D1Database): Promise<void> {
          VALUES (?, ?, ?, ?, ?)`,
       )
       .bind(
-        "0199d200-0003-4000-8000-000000000003",
+        KAFKA_STEP_ID,
         VERSION_IDS[2],
         1,
         "Confirm lag scope",
         "Measure lag by consumer group, topic, partition, and production region.",
       ),
+    database
+      .prepare(
+        `INSERT INTO action_plan_steps
+           (id, plan_version_id, position, title, description)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        AUTH_STEP_ID,
+        VERSION_IDS[3],
+        1,
+        "Confirm authentication impact",
+        "Measure authentication failures by service, region, and client.",
+      ),
+    database
+      .prepare(
+        `INSERT INTO action_plan_versions
+           (id, plan_id, version, name, use_when, approved_at, approved_by)
+         VALUES (?, ?, 2, ?, ?, ?, NULL)`,
+      )
+      .bind(
+        APPROVED_VERSION_ID,
+        PLAN_IDS[0],
+        names[0],
+        useWhen[0],
+        "2026-02-01T09:00:00.000Z",
+      ),
+    database
+      .prepare(
+        `INSERT INTO action_plan_steps
+           (id, plan_version_id, position, title, description)
+         VALUES (?, ?, 1, ?, ?)`,
+      )
+      .bind(
+        APPROVED_VERSION_STEP_ID,
+        APPROVED_VERSION_ID,
+        "Measure customer impact",
+        "Compare latency, completion rate, and available capacity with the regional baseline.",
+      ),
   )
 
-  const insertProposal = (
-    id: string,
-    planIndex: number,
-    status: string,
-    createdAt: string,
-    draft: { summary: string; name: string; useWhen: string } | null = null,
-    failureReason: string | null = null,
-  ) =>
+  const insertProposal = (fixture: {
+    id: string
+    planIndex: number
+    status: string
+    createdAt: string
+    draft?: { summary: string; name: string; useWhen: string }
+    failureReason?: string
+    createdVersionId?: string
+  }) =>
     database
       .prepare(
         `INSERT INTO review_proposals
@@ -165,176 +212,303 @@ async function seedReviewProposals(database: D1Database): Promise<void> {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
-        id,
-        PLAN_IDS[planIndex],
-        VERSION_IDS[planIndex],
-        status,
-        failureReason,
+        fixture.id,
+        PLAN_IDS[fixture.planIndex],
+        VERSION_IDS[fixture.planIndex],
+        fixture.status,
+        fixture.failureReason ?? null,
         2,
-        draft?.summary ?? null,
-        draft?.name ?? null,
-        draft?.useWhen ?? null,
-        createdAt,
-        createdAt,
-        status === "approved" || status === "rejected" ? createdAt : null,
+        fixture.draft?.summary ?? null,
+        fixture.draft?.name ?? null,
+        fixture.draft?.useWhen ?? null,
+        fixture.createdAt,
+        fixture.createdAt,
+        fixture.status === "approved" || fixture.status === "rejected"
+          ? fixture.createdAt
+          : null,
         null,
-        status === "rejected" ? "The evidence does not support this change." : null,
-        null,
+        fixture.status === "rejected"
+          ? "The evidence does not support this change."
+          : null,
+        fixture.createdVersionId ?? null,
       )
 
   statements.push(
-    insertProposal(
-      PROPOSALS.approved,
-      0,
-      "approved",
-      "2026-02-01T09:00:00.000Z",
-    ),
-    insertProposal(
-      PROPOSALS.updating,
-      0,
-      "updating",
-      "2026-02-02T09:00:00.000Z",
-    ),
-    insertProposal(
-      PROPOSALS.pending,
-      1,
-      "pending_review",
-      "2026-02-03T09:00:00.000Z",
-      {
-        summary: "Verify processor health before changing payment routing.",
-        name: "Payment authorization decline spike",
-        useWhen: "Use when valid card authorizations decline above baseline.",
+    insertProposal({
+      id: PROPOSALS.approved,
+      planIndex: 0,
+      status: "approved",
+      createdAt: "2026-02-01T09:00:00.000Z",
+      draft: {
+        summary: "Include the regional capacity check used during response.",
+        name: names[0],
+        useWhen: useWhen[0],
       },
-    ),
-    insertProposal(
-      PROPOSALS.failed,
-      2,
-      "failed",
-      "2026-02-04T09:00:00.000Z",
-      null,
-      "Proposal generation did not complete. Try again.",
-    ),
-    insertProposal(
-      PROPOSALS.noChange,
-      3,
-      "no_change",
-      "2026-02-05T09:00:00.000Z",
-    ),
-    insertProposal(
-      PROPOSALS.rejected,
-      0,
-      "rejected",
-      "2026-02-06T09:00:00.000Z",
-    ),
+      createdVersionId: APPROVED_VERSION_ID,
+    }),
+    insertProposal({
+      id: PROPOSALS.updating,
+      planIndex: 0,
+      status: "updating",
+      createdAt: "2026-02-02T09:00:00.000Z",
+    }),
+    insertProposal({
+      id: PROPOSALS.pending,
+      planIndex: 1,
+      status: "pending_review",
+      createdAt: "2026-02-03T09:00:00.000Z",
+      draft: {
+        summary: "Verify processor health before changing payment routing.",
+        name: names[1],
+        useWhen: useWhen[1],
+      },
+    }),
+    insertProposal({
+      id: PROPOSALS.failed,
+      planIndex: 2,
+      status: "failed",
+      createdAt: "2026-02-04T09:00:00.000Z",
+      failureReason: "Proposal generation did not complete. Try again.",
+    }),
+    insertProposal({
+      id: PROPOSALS.noChange,
+      planIndex: 3,
+      status: "no_change",
+      createdAt: "2026-02-05T09:00:00.000Z",
+      draft: {
+        summary: "The incident-specific deviation does not justify a plan change.",
+        name: names[3],
+        useWhen: useWhen[3],
+      },
+    }),
+    insertProposal({
+      id: PROPOSALS.rejected,
+      planIndex: 0,
+      status: "rejected",
+      createdAt: "2026-02-06T09:00:00.000Z",
+      draft: {
+        summary: "Clarify how responders compare regional impact.",
+        name: names[0],
+        useWhen: useWhen[0],
+      },
+    }),
   )
 
+  const approvedEvidenceId = "0199d500-0101-4000-8000-000000000101"
+  const rejectedEvidenceId = "0199d500-0106-4000-8000-000000000106"
+
   statements.push(
-    database
-      .prepare(
-        `INSERT INTO incidents
-           (id, title, symptoms, status, plan_version_id, review_proposal_id,
-            created_at, created_by, closed_at, closed_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(
-        INCIDENT_ID,
-        "Elevated card declines in Europe",
-        "Valid Visa authorizations declined after a processor routing change.",
-        "closed",
-        VERSION_IDS[1],
-        PROPOSALS.pending,
-        "2026-02-02T10:00:00.000Z",
-        null,
-        "2026-02-02T10:20:00.000Z",
-        null,
-      ),
-    database
-      .prepare(
-        `INSERT INTO action_records
-           (id, incident_id, sequence, type, plan_step_id, details, reason,
-            recorded_at, recorded_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(
-        "0199d500-0001-4000-8000-000000000001",
-        INCIDENT_ID,
-        1,
-        "step_completed",
-        PAYMENT_STEP_ID,
-        "Confirmed processor timeouts rather than issuer declines.",
-        null,
-        "2026-02-02T10:05:00.000Z",
-        null,
-      ),
-    database
-      .prepare(
-        `INSERT INTO action_records
-           (id, incident_id, sequence, type, plan_step_id, details, reason,
-            recorded_at, recorded_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(
-        ADDITIONAL_ACTION_ID,
-        INCIDENT_ID,
-        2,
-        "additional_action",
-        null,
-        "Checked processor health before changing payment routing.",
-        "The plan did not include an explicit processor health check.",
-        "2026-02-02T10:10:00.000Z",
-        null,
-      ),
-    database
-      .prepare(
-        `INSERT INTO review_proposal_steps
-           (id, proposal_id, source_step_id, position, title, description)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(
-        "0199d600-0001-4000-8000-000000000001",
-        PROPOSALS.pending,
-        PAYMENT_STEP_ID,
-        1,
-        "Classify processor responses",
-        "Separate issuer declines from processor, routing, or integration failures.",
-      ),
-    database
-      .prepare(
-        `INSERT INTO review_proposal_steps
-           (id, proposal_id, source_step_id, position, title, description)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(
-        PROPOSED_NEW_STEP_ID,
-        PROPOSALS.pending,
-        null,
-        2,
-        "Check processor health",
-        "Review processor latency, timeout rate, and regional availability before changing routing.",
-      ),
-    database
-      .prepare(
-        `INSERT INTO review_proposal_changes
-           (id, proposal_id, position, type, source_step_id, proposed_step_id,
-            rationale)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(
-        ADD_STEP_CHANGE_ID,
-        PROPOSALS.pending,
-        1,
-        "add_step",
-        null,
-        PROPOSED_NEW_STEP_ID,
-        "The response required checking processor health before rerouting traffic.",
-      ),
-    database
-      .prepare(
-        `INSERT INTO review_proposal_change_evidence
-           (change_id, action_record_id)
-         VALUES (?, ?)`,
-      )
-      .bind(ADD_STEP_CHANGE_ID, ADDITIONAL_ACTION_ID),
+    ...incidentFixtureStatements(database, {
+      id: "0199d400-0101-4000-8000-000000000101",
+      title: "Checkout latency after regional failover",
+      symptoms: "The secondary region had less capacity than expected.",
+      status: "closed",
+      planVersionId: VERSION_IDS[0],
+      reviewProposalId: PROPOSALS.approved,
+      createdAt: "2026-01-31T09:00:00.000Z",
+      closedAt: "2026-01-31T09:30:00.000Z",
+      actionRecords: [{
+        id: approvedEvidenceId,
+        type: "step_modified",
+        planStepId: CHECKOUT_STEP_ID,
+        details: "Compared regional capacity as part of the impact assessment.",
+        reason: "The source step did not mention capacity.",
+        recordedAt: "2026-01-31T09:20:00.000Z",
+      }],
+    }),
+    ...incidentFixtureStatements(database, {
+      id: "0199d400-0102-4000-8000-000000000102",
+      title: "Checkout latency during a traffic shift",
+      symptoms: "Latency increased while traffic moved between regions.",
+      status: "closed",
+      planVersionId: VERSION_IDS[0],
+      reviewProposalId: PROPOSALS.updating,
+      createdAt: "2026-02-01T10:00:00.000Z",
+      closedAt: "2026-02-02T08:50:00.000Z",
+      actionRecords: [{
+        id: "0199d500-0102-4000-8000-000000000102",
+        type: "step_modified",
+        planStepId: CHECKOUT_STEP_ID,
+        details: "Compared capacity before completing the impact assessment.",
+        reason: "Capacity was the likely constraint.",
+        recordedAt: "2026-02-02T08:40:00.000Z",
+      }],
+    }),
+    ...incidentFixtureStatements(database, {
+      id: INCIDENT_ID,
+      title: "Elevated card declines in Europe",
+      symptoms: "Valid Visa authorizations declined after a processor routing change.",
+      status: "closed",
+      planVersionId: VERSION_IDS[1],
+      reviewProposalId: PROPOSALS.pending,
+      createdAt: "2026-02-02T10:00:00.000Z",
+      closedAt: "2026-02-02T10:20:00.000Z",
+      actionRecords: [
+        {
+          id: "0199d500-0001-4000-8000-000000000001",
+          type: "step_completed",
+          planStepId: PAYMENT_STEP_ID,
+          details: "Confirmed processor timeouts rather than issuer declines.",
+          reason: null,
+          recordedAt: "2026-02-02T10:05:00.000Z",
+        },
+        {
+          id: ADDITIONAL_ACTION_ID,
+          type: "additional_action",
+          planStepId: null,
+          details: "Checked processor health before changing payment routing.",
+          reason: "The plan did not include an explicit processor health check.",
+          recordedAt: "2026-02-02T10:10:00.000Z",
+        },
+      ],
+    }),
+    ...incidentFixtureStatements(database, {
+      id: "0199d400-0104-4000-8000-000000000104",
+      title: "Kafka lag during a traffic spike",
+      symptoms: "Consumer lag increased across several partitions.",
+      status: "closed",
+      planVersionId: VERSION_IDS[2],
+      reviewProposalId: PROPOSALS.failed,
+      createdAt: "2026-02-03T10:00:00.000Z",
+      closedAt: "2026-02-04T08:50:00.000Z",
+      actionRecords: [{
+        id: "0199d500-0104-4000-8000-000000000104",
+        type: "step_modified",
+        planStepId: KAFKA_STEP_ID,
+        details: "Measured lag by partition before checking the consumer group.",
+        reason: "A single hot partition was suspected.",
+        recordedAt: "2026-02-04T08:40:00.000Z",
+      }],
+    }),
+    ...incidentFixtureStatements(database, {
+      id: "0199d400-0105-4000-8000-000000000105",
+      title: "Authentication failures isolated to one client",
+      symptoms: "A stale mobile client caused a brief increase in failures.",
+      status: "closed",
+      planVersionId: VERSION_IDS[3],
+      reviewProposalId: PROPOSALS.noChange,
+      createdAt: "2026-02-04T10:00:00.000Z",
+      closedAt: "2026-02-05T08:50:00.000Z",
+      actionRecords: [{
+        id: "0199d500-0105-4000-8000-000000000105",
+        type: "step_modified",
+        planStepId: AUTH_STEP_ID,
+        details: "Segmented failures by client before checking regions.",
+        reason: "The symptoms pointed to a client-specific problem.",
+        recordedAt: "2026-02-05T08:40:00.000Z",
+      }],
+    }),
+    ...incidentFixtureStatements(database, {
+      id: "0199d400-0106-4000-8000-000000000106",
+      title: "Checkout latency isolated to one client",
+      symptoms: "Only one client version showed elevated completion time.",
+      status: "closed",
+      planVersionId: VERSION_IDS[0],
+      reviewProposalId: PROPOSALS.rejected,
+      createdAt: "2026-02-05T10:00:00.000Z",
+      closedAt: "2026-02-06T08:50:00.000Z",
+      actionRecords: [{
+        id: rejectedEvidenceId,
+        type: "step_modified",
+        planStepId: CHECKOUT_STEP_ID,
+        details: "Compared impact by client version before checking regions.",
+        reason: "The incident appeared client-specific.",
+        recordedAt: "2026-02-06T08:40:00.000Z",
+      }],
+    }),
+  )
+
+  const insertDraftStep = database.prepare(
+    `INSERT INTO review_proposal_steps
+       (id, proposal_id, source_step_id, position, title, description)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  )
+  const insertChange = database.prepare(
+    `INSERT INTO review_proposal_changes
+       (id, proposal_id, position, type, source_step_id, proposed_step_id,
+        rationale)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  )
+  const insertEvidence = database.prepare(
+    `INSERT INTO review_proposal_change_evidence (change_id, action_record_id)
+     VALUES (?, ?)`,
+  )
+  const approvedDraftStepId = "0199d600-0101-4000-8000-000000000101"
+  const approvedChangeId = "0199d700-0101-4000-8000-000000000101"
+  const rejectedDraftStepId = "0199d600-0106-4000-8000-000000000106"
+  const rejectedChangeId = "0199d700-0106-4000-8000-000000000106"
+
+  statements.push(
+    insertDraftStep.bind(
+      approvedDraftStepId,
+      PROPOSALS.approved,
+      CHECKOUT_STEP_ID,
+      1,
+      "Measure customer impact",
+      "Compare latency, completion rate, and available capacity with the regional baseline.",
+    ),
+    insertChange.bind(
+      approvedChangeId,
+      PROPOSALS.approved,
+      1,
+      "update_step",
+      CHECKOUT_STEP_ID,
+      approvedDraftStepId,
+      "The response showed that regional capacity belongs in the impact assessment.",
+    ),
+    insertEvidence.bind(approvedChangeId, approvedEvidenceId),
+    insertDraftStep.bind(
+      "0199d600-0001-4000-8000-000000000001",
+      PROPOSALS.pending,
+      PAYMENT_STEP_ID,
+      1,
+      "Classify processor responses",
+      "Separate issuer declines from processor, routing, or integration failures.",
+    ),
+    insertDraftStep.bind(
+      PROPOSED_NEW_STEP_ID,
+      PROPOSALS.pending,
+      null,
+      2,
+      "Check processor health",
+      "Review processor latency, timeout rate, and regional availability before changing routing.",
+    ),
+    insertChange.bind(
+      ADD_STEP_CHANGE_ID,
+      PROPOSALS.pending,
+      1,
+      "add_step",
+      null,
+      PROPOSED_NEW_STEP_ID,
+      "The response required checking processor health before rerouting traffic.",
+    ),
+    insertEvidence.bind(ADD_STEP_CHANGE_ID, ADDITIONAL_ACTION_ID),
+    insertDraftStep.bind(
+      "0199d600-0105-4000-8000-000000000105",
+      PROPOSALS.noChange,
+      AUTH_STEP_ID,
+      1,
+      "Confirm authentication impact",
+      "Measure authentication failures by service, region, and client.",
+    ),
+    insertDraftStep.bind(
+      rejectedDraftStepId,
+      PROPOSALS.rejected,
+      CHECKOUT_STEP_ID,
+      1,
+      "Measure customer impact",
+      "Compare latency and completion rate by client and region.",
+    ),
+    insertChange.bind(
+      rejectedChangeId,
+      PROPOSALS.rejected,
+      1,
+      "update_step",
+      CHECKOUT_STEP_ID,
+      rejectedDraftStepId,
+      "The response suggested comparing impact by client before region.",
+    ),
+    insertEvidence.bind(rejectedChangeId, rejectedEvidenceId),
   )
 
   await database.batch(statements)

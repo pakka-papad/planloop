@@ -13,6 +13,7 @@ import {
 import { saveGeneratedProposalDraft } from "../../worker/persistence/review-proposal-drafts"
 import { findReviewProposalById } from "../../worker/persistence/review-proposals"
 import * as v from "valibot"
+import { incidentFixtureStatements } from "../support/database-fixtures"
 import { createPlanLoopTestHarness } from "../support/harness"
 
 const PLAN_ID = "0199f000-0001-4000-8000-000000000001"
@@ -73,36 +74,34 @@ async function seedGeneration(database: D1Database): Promise<void> {
         "2026-09-20T10:00:00.000Z",
         "2026-09-20T10:00:00.000Z",
       ),
-    database
-      .prepare(
-        `INSERT INTO incidents
-           (id, title, symptoms, status, plan_version_id, review_proposal_id,
-            created_at, created_by, closed_at, closed_by)
-         VALUES (?, ?, ?, 'closed', ?, ?, ?, NULL, ?, NULL)`,
-      )
-      .bind(
-        INCIDENT_ID,
-        "Checkout latency after regional failover",
-        "Completion time increased after traffic moved to the secondary region.",
-        VERSION_ID,
-        PROPOSAL_ID,
-        "2026-09-20T09:30:00.000Z",
-        "2026-09-20T10:00:00.000Z",
-      ),
-    database
-      .prepare(
-        `INSERT INTO action_records
-           (id, incident_id, sequence, type, plan_step_id, details, reason,
-            recorded_at, recorded_by)
-         VALUES (?, ?, 1, 'additional_action', NULL, ?, ?, ?, NULL)`,
-      )
-      .bind(
-        ACTION_RECORD_ID,
-        INCIDENT_ID,
-        "Verified capacity in the secondary region before shifting more traffic.",
-        "The pinned plan did not include a capacity check.",
-        "2026-09-20T09:50:00.000Z",
-      ),
+    ...incidentFixtureStatements(database, {
+      id: INCIDENT_ID,
+      title: "Checkout latency after regional failover",
+      symptoms: "Completion time increased after traffic moved to the secondary region.",
+      status: "closed",
+      planVersionId: VERSION_ID,
+      reviewProposalId: PROPOSAL_ID,
+      createdAt: "2026-09-20T09:30:00.000Z",
+      closedAt: "2026-09-20T10:00:00.000Z",
+      actionRecords: [
+        {
+          id: "0199f500-0001-4000-8000-000000000000",
+          type: "step_completed",
+          planStepId: STEP_ID,
+          details: "Measured customer impact against the regional baseline.",
+          reason: null,
+          recordedAt: "2026-09-20T09:45:00.000Z",
+        },
+        {
+          id: ACTION_RECORD_ID,
+          type: "additional_action",
+          planStepId: null,
+          details: "Verified capacity in the secondary region before shifting more traffic.",
+          reason: "The pinned plan did not include a capacity check.",
+          recordedAt: "2026-09-20T09:50:00.000Z",
+        },
+      ],
+    }),
   ])
 }
 
