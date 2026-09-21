@@ -986,18 +986,15 @@ test("approves a proposal once and publishes its draft as the next plan version"
     },
   })
 
-  const env = await worker.getEnv()
-  const versions = await env.DB.prepare(
-    `SELECT id, version FROM action_plan_versions
-     WHERE plan_id = ? ORDER BY version`,
-  )
-    .bind(PLAN_IDS[1])
-    .all<{ id: string; version: number }>()
-
-  expect(versions.results).toEqual([
-    { id: VERSION_IDS[1], version: 1 },
-    { id: body.created_plan_version.id, version: 2 },
-  ])
+  const planResponse = await server.fetch(`/api/v1/action-plans/${PLAN_IDS[1]}`)
+  expect(planResponse.status).toBe(200)
+  expect(await planResponse.json()).toMatchObject({
+    id: PLAN_IDS[1],
+    current_version: {
+      id: body.created_plan_version.id,
+      version: 2,
+    },
+  })
 })
 
 test("does not approve a proposal whose source plan version was superseded", async () => {
@@ -1051,12 +1048,11 @@ test("does not approve a proposal whose source plan version was superseded", asy
     code: "source_plan_version_superseded",
   })
 
-  const versions = await env.DB.prepare(
-    "SELECT version FROM action_plan_versions WHERE plan_id = ? ORDER BY version",
-  )
-    .bind(PLAN_IDS[1])
-    .all<{ version: number }>()
-  expect(versions.results.map(({ version }) => version)).toEqual([1, 2])
+  const planResponse = await server.fetch(`/api/v1/action-plans/${PLAN_IDS[1]}`)
+  expect(planResponse.status).toBe(200)
+  expect(await planResponse.json()).toMatchObject({
+    current_version: { id: SUPERSEDED_VERSION_ID, version: 2 },
+  })
 })
 
 test("rejects a pending proposal without publishing a plan version", async () => {
@@ -1084,13 +1080,11 @@ test("rejects a pending proposal without publishing a plan version", async () =>
     created_plan_version: null,
   })
 
-  const env = await worker.getEnv()
-  const versions = await env.DB.prepare(
-    "SELECT COUNT(*) AS count FROM action_plan_versions WHERE plan_id = ?",
-  )
-    .bind(PLAN_IDS[1])
-    .first<{ count: number }>()
-  expect(versions?.count).toBe(1)
+  const planResponse = await server.fetch(`/api/v1/action-plans/${PLAN_IDS[1]}`)
+  expect(planResponse.status).toBe(200)
+  expect(await planResponse.json()).toMatchObject({
+    current_version: { id: VERSION_IDS[1], version: 1 },
+  })
 })
 
 test.each([

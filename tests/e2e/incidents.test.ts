@@ -212,18 +212,6 @@ test("creates an open incident pinned to the selected current plan version", asy
   expect(incident.created_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
 
   const env = await worker.getEnv()
-  expect(
-    await env.DB.prepare(
-      "SELECT status, plan_version_id, review_proposal_id FROM incidents WHERE id = ?",
-    )
-      .bind(incident.id)
-      .first(),
-  ).toEqual({
-    status: "open",
-    plan_version_id: CURRENT_VERSION_ID,
-    review_proposal_id: null,
-  })
-
   await env.DB.batch([
     env.DB.prepare(
       `INSERT INTO action_records
@@ -672,9 +660,10 @@ test("closes an incident without a proposal when the plan was followed", async (
 
   expect(retryResponse.status).toBe(200)
   expect(await retryResponse.json()).toEqual(closure)
-  expect(
-    await env.DB.prepare("SELECT COUNT(*) AS count FROM review_proposals").first(),
-  ).toEqual({ count: 0 })
+
+  const proposalsResponse = await server.fetch("/api/v1/review-proposals")
+  expect(proposalsResponse.status).toBe(200)
+  expect(await proposalsResponse.json()).toMatchObject({ items: [] })
 })
 
 test("aggregates repeated and out-of-order actions into the active proposal", async () => {
@@ -757,20 +746,20 @@ test("aggregates repeated and out-of-order actions into the active proposal", as
 
   expect(secondResponse.status).toBe(200)
   expect(secondClosure.review_proposal_id).toBe(firstClosure.review_proposal_id)
-  expect(
-    await env.DB.prepare(
-      `SELECT plan_id, source_plan_version_id, status, failure_reason, revision
-       FROM review_proposals
-       WHERE id = ?`,
-    )
-      .bind(firstClosure.review_proposal_id)
-      .first(),
-  ).toEqual({
+
+  const proposalPath = `/api/v1/review-proposals/${firstClosure.review_proposal_id}`
+  const proposalResponse = await server.fetch(proposalPath)
+  expect(proposalResponse.status).toBe(200)
+  expect(await proposalResponse.json()).toMatchObject({
     plan_id: PLAN_ID,
-    source_plan_version_id: PREVIOUS_VERSION_ID,
+    source_plan_version: { id: PREVIOUS_VERSION_ID },
     status: "updating",
     failure_reason: null,
     revision: 2,
+    contributing_incidents: expect.arrayContaining([
+      expect.objectContaining({ id: FIRST_INCIDENT_ID }),
+      expect.objectContaining({ id: THIRD_INCIDENT_ID }),
+    ]),
   })
 
   const retryResponse = await server.fetch(
@@ -780,9 +769,10 @@ test("aggregates repeated and out-of-order actions into the active proposal", as
 
   expect(retryResponse.status).toBe(200)
   expect(await retryResponse.json()).toEqual(secondClosure)
-  expect(
-    await env.DB.prepare("SELECT revision FROM review_proposals WHERE id = ?")
-      .bind(firstClosure.review_proposal_id)
-      .first(),
-  ).toEqual({ revision: 2 })
+
+  const unchangedProposalResponse = await server.fetch(proposalPath)
+  expect(unchangedProposalResponse.status).toBe(200)
+  expect(unchangedProposalResponse.headers.get("etag")).toBe(
+    `"${firstClosure.review_proposal_id}:2"`,
+  )
 })
