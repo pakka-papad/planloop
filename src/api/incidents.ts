@@ -103,14 +103,18 @@ export function createIncident(input: CreateIncidentRequest): Promise<Incident> 
   return postJson<Incident>("/api/v1/incidents", input)
 }
 
-export function listOpenIncidents(
+export function listIncidents(
+  status: IncidentStatus | null,
   cursor: string | null = null,
   signal?: AbortSignal,
 ): Promise<IncidentPage> {
-  const search = new URLSearchParams({ status: "open" })
+  const search = new URLSearchParams()
+  if (status !== null) search.set("status", status)
   if (cursor !== null) search.set("cursor", cursor)
 
-  return getJson<IncidentPage>(`/api/v1/incidents?${search}`, signal)
+  const query = search.size === 0 ? "" : `?${search}`
+
+  return getJson<IncidentPage>(`/api/v1/incidents${query}`, signal)
 }
 
 export function getIncident(id: string, signal?: AbortSignal): Promise<Incident> {

@@ -156,7 +156,7 @@ function resolveRoute(pathname: string, searchParams: URLSearchParams): Route {
     return {
       content: <IncidentsPage />,
       section: "incidents",
-      title: "Open incidents",
+      title: "Incidents",
     }
   }
 
