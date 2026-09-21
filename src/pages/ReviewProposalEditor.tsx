@@ -240,27 +240,39 @@ function newChangeKeys(
 
 export function ReviewProposalEditor({
   etag,
+  onBusyChange,
   onSaved,
   proposal,
 }: {
   readonly etag: string
+  readonly onBusyChange: (busy: boolean) => void
   readonly onSaved: (resource: VersionedReviewProposal) => void
   readonly proposal: ReviewProposal
 }) {
   const draft = proposal.draft
   if (draft === null) return null
 
-  return <PlanComparison draft={draft} etag={etag} onSaved={onSaved} proposal={proposal} />
+  return (
+    <PlanComparison
+      draft={draft}
+      etag={etag}
+      onBusyChange={onBusyChange}
+      onSaved={onSaved}
+      proposal={proposal}
+    />
+  )
 }
 
 function PlanComparison({
   draft,
   etag,
+  onBusyChange,
   onSaved,
   proposal,
 }: {
   readonly draft: ProposalDraft
   readonly etag: string
+  readonly onBusyChange: (busy: boolean) => void
   readonly onSaved: (resource: VersionedReviewProposal) => void
   readonly proposal: ReviewProposal
 }) {
@@ -290,6 +302,12 @@ function PlanComparison({
   const displayState = edit?.kind === "remove"
     ? initial.state
     : edit?.candidate ?? initial.state
+
+  useEffect(() => {
+    onBusyChange(edit !== null || isSaving)
+  }, [edit, isSaving, onBusyChange])
+
+  useEffect(() => () => onBusyChange(false), [onBusyChange])
 
   useEffect(() => {
     if (!editable) return

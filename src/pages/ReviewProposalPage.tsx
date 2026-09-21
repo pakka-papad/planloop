@@ -15,6 +15,7 @@ import {
 } from "../api/review-proposals"
 import { formatDateTime } from "../format"
 import { AppLink } from "../navigation"
+import { ReviewProposalDecisionButton } from "./ReviewProposalDecision"
 import { ReviewProposalEditor } from "./ReviewProposalEditor"
 
 const statusPresentation: Record<ReviewProposalStatus, {
@@ -202,22 +203,33 @@ function ProposalView({
   readonly retryError: string | null
 }) {
   const presentation = statusPresentation[proposal.status]
+  const [isEditorBusy, setIsEditorBusy] = useState(false)
 
   return (
     <div className="mt-8 space-y-6">
       <header className="rounded-xl border bg-card p-6 sm:p-8">
-        <div className="flex flex-wrap items-center gap-3 text-xs">
-          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-semibold ${presentation.className}`}>
-            {proposal.status === "updating" ? (
-              <span aria-hidden="true" className="size-3 animate-spin rounded-full border-2 border-current border-r-transparent" />
-            ) : null}
-            {presentation.label}
-          </span>
-          <span className="text-muted-foreground">
-            Source version {proposal.source_plan_version.version}
-          </span>
-          <span aria-hidden="true" className="text-border">•</span>
-          <span className="text-muted-foreground">Proposal revision {proposal.revision}</span>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3 text-xs">
+            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-semibold ${presentation.className}`}>
+              {proposal.status === "updating" ? (
+                <span aria-hidden="true" className="size-3 animate-spin rounded-full border-2 border-current border-r-transparent" />
+              ) : null}
+              {presentation.label}
+            </span>
+            <span className="text-muted-foreground">
+              Source version {proposal.source_plan_version.version}
+            </span>
+            <span aria-hidden="true" className="text-border">•</span>
+            <span className="text-muted-foreground">Proposal revision {proposal.revision}</span>
+          </div>
+          {proposal.status === "pending_review" && proposal.draft ? (
+            <ReviewProposalDecisionButton
+              disabled={isEditorBusy}
+              etag={etag}
+              onDecided={onProposalUpdated}
+              proposalId={proposal.id}
+            />
+          ) : null}
         </div>
         <h1 className="mt-5 max-w-4xl text-3xl font-semibold tracking-tight sm:text-4xl">
           {proposal.source_plan_version.name}
@@ -293,6 +305,7 @@ function ProposalView({
         <ReviewProposalEditor
           etag={etag}
           key={proposal.revision}
+          onBusyChange={setIsEditorBusy}
           onSaved={onProposalUpdated}
           proposal={proposal}
         />

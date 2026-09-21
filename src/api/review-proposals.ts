@@ -116,6 +116,10 @@ export interface VersionedReviewProposal {
   readonly etag: string
 }
 
+export type ReviewProposalDecision =
+  | { readonly decision: "approved"; readonly comment?: string }
+  | { readonly decision: "rejected"; readonly comment: string }
+
 export function listReviewProposals(
   cursor: string | null = null,
   signal?: AbortSignal,
@@ -169,6 +173,25 @@ export function updateReviewProposalDraft(
         "if-match": etag,
       },
       body: JSON.stringify(draft),
+    },
+  ).then(({ data, etag: nextEtag }) => ({ proposal: data, etag: nextEtag }))
+}
+
+export function decideReviewProposal(
+  id: string,
+  etag: string,
+  decision: ReviewProposalDecision,
+): Promise<VersionedReviewProposal> {
+  return requestJsonWithEtag<ReviewProposal>(
+    `/api/v1/review-proposals/${encodeURIComponent(id)}/decision`,
+    {
+      method: "PUT",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json",
+        "if-match": etag,
+      },
+      body: JSON.stringify(decision),
     },
   ).then(({ data, etag: nextEtag }) => ({ proposal: data, etag: nextEtag }))
 }
