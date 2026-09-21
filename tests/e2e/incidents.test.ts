@@ -216,72 +216,72 @@ test("creates an open incident pinned to the selected current plan version", asy
   })
   expectUuidV4(incident.id)
   expectUtcTimestamp(incident.created_at)
+})
 
+test("returns a complete incident with ordered action records", async () => {
   const env = await worker.getEnv()
-  await env.DB.batch([
-    env.DB.prepare(
-      `INSERT INTO action_records
-         (id, incident_id, sequence, type, plan_step_id, details, reason,
-          recorded_at, recorded_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(
-      "0199d000-0001-4000-8000-000000000002",
-      incident.id,
-      2,
-      "step_modified",
-      "0199c200-0002-4000-8000-000000000002",
-      "Checked regional token validation errors before identity provider latency.",
-      "The error breakdown was needed to identify the affected dependency.",
-      "2026-09-20T10:15:00.000Z",
-      null,
-    ),
-    env.DB.prepare(
-      `INSERT INTO action_records
-         (id, incident_id, sequence, type, plan_step_id, details, reason,
-          recorded_at, recorded_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(
-      "0199d000-0001-4000-8000-000000000001",
-      incident.id,
-      1,
-      "step_completed",
-      "0199c200-0002-4000-8000-000000000001",
-      "Confirmed elevated failures in checkout and account services.",
-      null,
-      "2026-09-20T10:10:00.000Z",
-      null,
-    ),
-  ])
+  await seedIncidents(env.DB)
 
-  const getResponse = await server.fetch(`/api/v1/incidents/${incident.id}`)
+  const response = await server.fetch(`/api/v1/incidents/${SECOND_INCIDENT_ID}`)
 
-  expect(getResponse.status).toBe(200)
-  expect(await getResponse.json()).toEqual({
-    ...incident,
+  expect(response.status).toBe(200)
+  expect(await response.json()).toEqual({
+    id: SECOND_INCIDENT_ID,
+    title: "Authentication errors during checkout",
+    symptoms: "Checkout authentication errors increased in the European region.",
+    status: "closed",
+    pinned_plan_version: {
+      id: CURRENT_VERSION_ID,
+      plan_id: PLAN_ID,
+      version: 2,
+      name: "Elevated authentication errors",
+      use_when: "Use when authentication errors rise across customer-facing services.",
+      steps: [
+        {
+          id: "0199c200-0002-4000-8000-000000000001",
+          position: 1,
+          title: "Assess customer impact",
+          description: "Confirm scope, affected services, regions, and customer impact.",
+        },
+        {
+          id: "0199c200-0002-4000-8000-000000000002",
+          position: 2,
+          title: "Inspect identity dependencies",
+          description: "Check identity provider latency, errors, and token validation failures.",
+        },
+      ],
+      approved_at: "2026-09-10T11:30:00.000Z",
+      approved_by: null,
+    },
     action_records: [
       {
-        id: "0199d000-0001-4000-8000-000000000001",
-        incident_id: incident.id,
+        id: "0199c300-0001-4000-8000-000000000001",
+        incident_id: SECOND_INCIDENT_ID,
         sequence: 1,
         type: "step_completed",
         plan_step_id: "0199c200-0002-4000-8000-000000000001",
-        details: "Confirmed elevated failures in checkout and account services.",
+        details: "Confirmed checkout impact in the European region.",
         reason: null,
-        recorded_at: "2026-09-20T10:10:00.000Z",
+        recorded_at: "2026-09-19T10:15:00.000Z",
         recorded_by: null,
       },
       {
-        id: "0199d000-0001-4000-8000-000000000002",
-        incident_id: incident.id,
+        id: "0199c300-0001-4000-8000-000000000002",
+        incident_id: SECOND_INCIDENT_ID,
         sequence: 2,
-        type: "step_modified",
+        type: "step_completed",
         plan_step_id: "0199c200-0002-4000-8000-000000000002",
-        details: "Checked regional token validation errors before identity provider latency.",
-        reason: "The error breakdown was needed to identify the affected dependency.",
-        recorded_at: "2026-09-20T10:15:00.000Z",
+        details: "Confirmed the identity provider was operating normally.",
+        reason: null,
+        recorded_at: "2026-09-19T10:20:00.000Z",
         recorded_by: null,
       },
     ],
+    review_proposal_id: null,
+    created_at: "2026-09-19T10:00:00.000Z",
+    created_by: null,
+    closed_at: "2026-09-19T11:00:00.000Z",
+    closed_by: null,
   })
 })
 
