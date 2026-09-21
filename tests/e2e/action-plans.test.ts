@@ -6,6 +6,7 @@ const PLAN_ID = "0199b000-0001-4000-8000-000000000001"
 const CURRENT_VERSION_ID = "0199b100-0001-4000-8000-000000000002"
 const PAYMENT_PLAN_ID = "0199b000-0002-4000-8000-000000000002"
 const KAFKA_PLAN_ID = "0199b000-0003-4000-8000-000000000003"
+const UTC_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
 
 function encodedCursor(value: unknown): string {
   return Buffer.from(JSON.stringify(value)).toString("base64url")
@@ -262,6 +263,12 @@ test("creates an approved action plan and persists its ordered steps", async () 
       ],
     },
   })
+  expect(created.created_at).toMatch(UTC_TIMESTAMP)
+  expect(new Date(created.created_at).toISOString()).toBe(created.created_at)
+  expect(created.current_version.approved_at).toMatch(UTC_TIMESTAMP)
+  expect(new Date(created.current_version.approved_at).toISOString()).toBe(
+    created.current_version.approved_at,
+  )
   expect(created.created_at).toBe(created.current_version.approved_at)
   expect(created.id).toMatch(/^[0-9a-f-]{36}$/)
   expect(created.current_version.id).toMatch(/^[0-9a-f-]{36}$/)
