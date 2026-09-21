@@ -1,7 +1,10 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "vitest"
 
 import { incidentFixtureStatements } from "../support/database-fixtures"
-import { createPlanLoopTestHarness } from "../support/harness"
+import {
+  createPlanLoopTestHarness,
+  setWorkflowAvailable,
+} from "../support/harness"
 
 const PLAN_ID = "0199c000-0001-4000-8000-000000000001"
 const PREVIOUS_VERSION_ID = "0199c100-0001-4000-8000-000000000001"
@@ -612,6 +615,65 @@ test("rejects closure while pinned plan steps are unrecorded", async () => {
       "0199c200-0002-4000-8000-000000000002",
     ],
   })
+})
+
+test("returns 503 after closing an incident when workflow dispatch is unavailable", async () => {
+  const env = await worker.getEnv()
+  await seedIncidents(env.DB)
+  const recordResponse = await server.fetch(
+    `/api/v1/incidents/${FIRST_INCIDENT_ID}/action-records`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        type: "step_modified",
+        plan_step_id: "0199c200-0001-4000-8000-000000000001",
+        details: "Checked impact by region before assessing affected services.",
+        reason: "The regional pattern was needed to scope the response.",
+      }),
+    },
+  )
+  expect(recordResponse.status).toBe(201)
+
+  await setWorkflowAvailable(server, false)
+
+  try {
+    const closeResponse = await server.fetch(
+      `/api/v1/incidents/${FIRST_INCIDENT_ID}/closure`,
+      { method: "PUT" },
+    )
+
+    expect(closeResponse.status).toBe(503)
+    expect(await closeResponse.json()).toMatchObject({
+      code: "workflow_unavailable",
+    })
+
+    const incidentResponse = await server.fetch(
+      `/api/v1/incidents/${FIRST_INCIDENT_ID}`,
+    )
+    const incident = await incidentResponse.json() as {
+      status: string
+      review_proposal_id: string | null
+    }
+
+    expect(incidentResponse.status).toBe(200)
+    expect(incident).toMatchObject({
+      status: "closed",
+      review_proposal_id: expect.any(String),
+    })
+
+    const proposalResponse = await server.fetch(
+      `/api/v1/review-proposals/${incident.review_proposal_id}`,
+    )
+    expect(proposalResponse.status).toBe(200)
+    expect(await proposalResponse.json()).toMatchObject({
+      status: "failed",
+      failure_reason: "Proposal generation could not be started. Try again.",
+      revision: 2,
+    })
+  } finally {
+    await setWorkflowAvailable(server, true)
+  }
 })
 
 test("closes an incident without a proposal when the plan was followed", async () => {

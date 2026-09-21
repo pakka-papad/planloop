@@ -1,7 +1,10 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "vitest"
 
 import { incidentFixtureStatements } from "../support/database-fixtures"
-import { createPlanLoopTestHarness } from "../support/harness"
+import {
+  createPlanLoopTestHarness,
+  setWorkflowAvailable,
+} from "../support/harness"
 
 const PLAN_IDS = [
   "0199d000-0001-4000-8000-000000000001",
@@ -700,6 +703,36 @@ test("retries failed generation once for concurrent requests with the same ETag"
     failure_reason: null,
     revision: 3,
   })
+})
+
+test("returns 503 and records failure when generation retry cannot dispatch", async () => {
+  await setWorkflowAvailable(server, false)
+
+  try {
+    const response = await server.fetch(
+      `/api/v1/review-proposals/${PROPOSALS.failed}/generation-attempts`,
+      {
+        method: "POST",
+        headers: { "if-match": `"${PROPOSALS.failed}:2"` },
+      },
+    )
+
+    expect(response.status).toBe(503)
+    expect(await response.json()).toMatchObject({ code: "workflow_unavailable" })
+
+    const proposalResponse = await server.fetch(
+      `/api/v1/review-proposals/${PROPOSALS.failed}`,
+    )
+    expect(proposalResponse.status).toBe(200)
+    expect(proposalResponse.headers.get("etag")).toBe(`"${PROPOSALS.failed}:4"`)
+    expect(await proposalResponse.json()).toMatchObject({
+      status: "failed",
+      failure_reason: "Proposal generation could not be started. Try again.",
+      revision: 4,
+    })
+  } finally {
+    await setWorkflowAvailable(server, true)
+  }
 })
 
 test("restarts fresh updating generation without changing the revision", async () => {

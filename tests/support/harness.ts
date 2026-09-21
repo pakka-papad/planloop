@@ -1,4 +1,4 @@
-import { createTestHarness } from "wrangler"
+import { createTestHarness, type TestHarness } from "wrangler"
 
 export function createPlanLoopTestHarness() {
   return createTestHarness({
@@ -13,4 +13,17 @@ export function createPlanLoopTestHarness() {
       { configPath: "./tests/support/mock-bindings.wrangler.jsonc" },
     ],
   })
+}
+
+export async function setWorkflowAvailable(
+  server: TestHarness,
+  available: boolean,
+): Promise<void> {
+  const worker = server.getWorker<
+    unknown,
+    typeof import("./mock-bindings")
+  >("planloop-test-bindings")
+  const bindings = await worker.getExport()
+
+  await bindings.setWorkflowAvailable(available)
 }
