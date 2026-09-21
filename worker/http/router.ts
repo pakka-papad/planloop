@@ -14,6 +14,7 @@ import {
 } from "./incidents"
 import { notFound } from "./problems"
 import {
+  handleDecideReviewProposal,
   handleGetReviewProposal,
   handleListReviewProposals,
   handleReplaceReviewProposalDraft,
@@ -129,6 +130,18 @@ const routes: readonly Route[] = [
     }),
     handle: (request, env, match) =>
       handleReplaceReviewProposalDraft(
+        request,
+        env.DB,
+        match.pathname.groups.proposalId,
+      ),
+  },
+  {
+    method: "PUT",
+    pattern: new URLPattern({
+      pathname: "/api/v1/review-proposals/:proposalId/decision",
+    }),
+    handle: (request, env, match) =>
+      handleDecideReviewProposal(
         request,
         env.DB,
         match.pathname.groups.proposalId,

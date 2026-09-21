@@ -94,3 +94,14 @@ export const ReplaceProposalDraftRequestSchema = v.strictObject({
 export type ReplaceProposalDraftRequest = v.InferOutput<
   typeof ReplaceProposalDraftRequestSchema
 >
+
+export const DecideProposalRequestSchema = v.variant("decision", [
+  v.strictObject({
+    decision: v.literal("approved"),
+    comment: v.optional(requiredString(1000)),
+  }),
+  v.strictObject({
+    decision: v.literal("rejected"),
+    comment: requiredString(1000),
+  }),
+])

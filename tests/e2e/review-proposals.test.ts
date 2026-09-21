@@ -30,6 +30,8 @@ const INCIDENT_ID = "0199d400-0001-4000-8000-000000000001"
 const ADDITIONAL_ACTION_ID = "0199d500-0002-4000-8000-000000000002"
 const PROPOSED_NEW_STEP_ID = "0199d600-0002-4000-8000-000000000002"
 const ADD_STEP_CHANGE_ID = "0199d700-0001-4000-8000-000000000001"
+const SUPERSEDED_VERSION_ID = "0199d100-0005-4000-8000-000000000005"
+const SUPERSEDED_STEP_ID = "0199d200-0005-4000-8000-000000000005"
 
 const server = createPlanLoopTestHarness()
 const worker = server.getWorker<Env>("planloop")
@@ -761,6 +763,243 @@ test("rejects a draft whose changes do not describe its plan differences", async
     code: "validation_error",
     errors: [{ field: "body", message: "missing changes: add:2" }],
   })
+})
+
+test("approves a proposal once and publishes its draft as the next plan version", async () => {
+  const path = `/api/v1/review-proposals/${PROPOSALS.pending}/decision`
+  const request = () => server.fetch(path, {
+    method: "PUT",
+    headers: {
+      "content-type": "application/json",
+      "if-match": `"${PROPOSALS.pending}:2"`,
+    },
+    body: JSON.stringify({
+      decision: "approved",
+      comment: "The incident evidence supports adding the processor health check.",
+    }),
+  })
+  const responses = await Promise.all([request(), request()])
+
+  expect(responses.map((response) => response.status).sort()).toEqual([200, 412])
+
+  const approved = responses.find((response) => response.status === 200)
+  expect(approved?.headers.get("etag")).toBe(`"${PROPOSALS.pending}:3"`)
+
+  const body = await approved?.json() as {
+    status: string
+    revision: number
+    decision_comment: string | null
+    created_plan_version: {
+      id: string
+      plan_id: string
+      version: number
+      name: string
+      use_when: string
+      steps: Array<{ position: number; title: string; description: string }>
+      approved_by: string | null
+    }
+  }
+
+  expect(body).toMatchObject({
+    status: "approved",
+    revision: 3,
+    decision_comment: "The incident evidence supports adding the processor health check.",
+    created_plan_version: {
+      plan_id: PLAN_IDS[1],
+      version: 2,
+      name: "Payment authorization decline spike",
+      use_when: "Use when valid card authorizations decline above baseline.",
+      approved_by: null,
+      steps: [
+        {
+          position: 1,
+          title: "Classify processor responses",
+          description:
+            "Separate issuer declines from processor, routing, or integration failures.",
+        },
+        {
+          position: 2,
+          title: "Check processor health",
+          description:
+            "Review processor latency, timeout rate, and regional availability before changing routing.",
+        },
+      ],
+    },
+  })
+
+  const env = await worker.getEnv()
+  const versions = await env.DB.prepare(
+    `SELECT id, version FROM action_plan_versions
+     WHERE plan_id = ? ORDER BY version`,
+  )
+    .bind(PLAN_IDS[1])
+    .all<{ id: string; version: number }>()
+
+  expect(versions.results).toEqual([
+    { id: VERSION_IDS[1], version: 1 },
+    { id: body.created_plan_version.id, version: 2 },
+  ])
+
+  const audit = await env.DB.prepare(
+    `SELECT event_type, details_json FROM audit_events WHERE entity_id = ?`,
+  )
+    .bind(PROPOSALS.pending)
+    .first<{ event_type: string; details_json: string }>()
+
+  expect(audit?.event_type).toBe("review_proposal_approved")
+  expect(JSON.parse(audit?.details_json ?? "null")).toEqual({
+    revision: 3,
+    created_plan_version_id: body.created_plan_version.id,
+  })
+})
+
+test("does not approve a proposal whose source plan version was superseded", async () => {
+  const env = await worker.getEnv()
+
+  await env.DB.batch([
+    env.DB
+      .prepare(
+        `INSERT INTO action_plan_versions
+           (id, plan_id, version, name, use_when, approved_at, approved_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        SUPERSEDED_VERSION_ID,
+        PLAN_IDS[1],
+        2,
+        "Payment authorization decline spike",
+        "Use when valid card authorizations decline above baseline.",
+        "2026-02-04T09:00:00.000Z",
+        null,
+      ),
+    env.DB
+      .prepare(
+        `INSERT INTO action_plan_steps
+           (id, plan_version_id, position, title, description)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        SUPERSEDED_STEP_ID,
+        SUPERSEDED_VERSION_ID,
+        1,
+        "Classify processor responses",
+        "Separate issuer declines from processor, routing, or integration failures.",
+      ),
+  ])
+
+  const response = await server.fetch(
+    `/api/v1/review-proposals/${PROPOSALS.pending}/decision`,
+    {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+        "if-match": `"${PROPOSALS.pending}:2"`,
+      },
+      body: JSON.stringify({ decision: "approved" }),
+    },
+  )
+
+  expect(response.status).toBe(409)
+  expect(await response.json()).toMatchObject({
+    code: "source_plan_version_superseded",
+  })
+
+  const versions = await env.DB.prepare(
+    "SELECT version FROM action_plan_versions WHERE plan_id = ? ORDER BY version",
+  )
+    .bind(PLAN_IDS[1])
+    .all<{ version: number }>()
+  expect(versions.results.map(({ version }) => version)).toEqual([1, 2])
+})
+
+test("rejects a pending proposal without publishing a plan version", async () => {
+  const response = await server.fetch(
+    `/api/v1/review-proposals/${PROPOSALS.pending}/decision`,
+    {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+        "if-match": `"${PROPOSALS.pending}:2"`,
+      },
+      body: JSON.stringify({
+        decision: "rejected",
+        comment: "The evidence does not justify changing the shared plan.",
+      }),
+    },
+  )
+
+  expect(response.status).toBe(200)
+  expect(response.headers.get("etag")).toBe(`"${PROPOSALS.pending}:3"`)
+  expect(await response.json()).toMatchObject({
+    status: "rejected",
+    revision: 3,
+    decision_comment: "The evidence does not justify changing the shared plan.",
+    created_plan_version: null,
+  })
+
+  const env = await worker.getEnv()
+  const versions = await env.DB.prepare(
+    "SELECT COUNT(*) AS count FROM action_plan_versions WHERE plan_id = ?",
+  )
+    .bind(PLAN_IDS[1])
+    .first<{ count: number }>()
+  expect(versions?.count).toBe(1)
+})
+
+test.each([
+  {
+    name: "missing If-Match",
+    proposalId: PROPOSALS.pending,
+    headers: { "content-type": "application/json" },
+    body: { decision: "approved" },
+    status: 428,
+    code: "proposal_revision_required",
+  },
+  {
+    name: "stale revision",
+    proposalId: PROPOSALS.pending,
+    headers: {
+      "content-type": "application/json",
+      "if-match": `"${PROPOSALS.pending}:1"`,
+    },
+    body: { decision: "approved" },
+    status: 412,
+    code: "proposal_revision_stale",
+  },
+  {
+    name: "an already approved proposal",
+    proposalId: PROPOSALS.approved,
+    headers: {
+      "content-type": "application/json",
+      "if-match": `"${PROPOSALS.approved}:2"`,
+    },
+    body: { decision: "approved" },
+    status: 409,
+    code: "proposal_already_decided",
+  },
+  {
+    name: "a rejection without a comment",
+    proposalId: PROPOSALS.pending,
+    headers: {
+      "content-type": "application/json",
+      "if-match": `"${PROPOSALS.pending}:2"`,
+    },
+    body: { decision: "rejected" },
+    status: 422,
+    code: "validation_error",
+  },
+])("rejects a decision with $name", async ({ proposalId, headers, body, status, code }) => {
+  const response = await server.fetch(
+    `/api/v1/review-proposals/${proposalId}/decision`,
+    {
+      method: "PUT",
+      headers,
+      body: JSON.stringify(body),
+    },
+  )
+
+  expect(response.status).toBe(status)
+  expect(await response.json()).toMatchObject({ code })
 })
 
 test("filters by one status", async () => {

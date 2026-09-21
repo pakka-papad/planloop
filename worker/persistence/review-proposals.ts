@@ -328,19 +328,24 @@ export async function findReviewProposalById(
       ? null
       : v.parse(UuidSchema, row.created_plan_version_id)
 
+  const loadPlanVersions = async () => {
+    const sourcePlanVersion = await findActionPlanVersionById(database, sourceVersionId)
+    const createdPlanVersion = createdVersionId === null
+      ? null
+      : await findActionPlanVersionById(database, createdVersionId)
+
+    return { sourcePlanVersion, createdPlanVersion }
+  }
+
   const [
-    sourcePlanVersion,
-    createdPlanVersion,
+    planVersions,
     incidentResult,
     actionRecordResult,
     proposedStepResult,
     changeResult,
     evidenceResult,
   ] = await Promise.all([
-    findActionPlanVersionById(database, sourceVersionId),
-    createdVersionId === null
-      ? Promise.resolve(null)
-      : findActionPlanVersionById(database, createdVersionId),
+    loadPlanVersions(),
     database
       .prepare(
         `SELECT id, title, symptoms, status, plan_version_id, closed_at
@@ -394,6 +399,7 @@ export async function findReviewProposalById(
       .bind(proposalId)
       .all<ReviewProposalChangeEvidenceRow>(),
   ])
+  const { sourcePlanVersion, createdPlanVersion } = planVersions
 
   if (sourcePlanVersion === null) {
     throw new Error(`Proposal ${row.id} references a missing source plan version`)

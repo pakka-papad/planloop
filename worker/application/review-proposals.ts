@@ -20,6 +20,10 @@ import {
   findProposalWorkflowTarget,
   findReviewProposals,
 } from "../persistence/review-proposals"
+import {
+  approveReviewProposal,
+  rejectReviewProposal,
+} from "../persistence/review-proposal-decisions"
 import { saveEditedProposalDraft } from "../persistence/review-proposal-drafts"
 import {
   ProposalDraftValidationError,
@@ -164,6 +168,90 @@ export async function replaceReviewProposalDraft(
   }
 
   return { status: "updated", proposal: updatedProposal }
+}
+
+export type DecideReviewProposalResult =
+  | { readonly status: "decided"; readonly proposal: ReviewProposal }
+  | { readonly status: "proposal_not_found" }
+  | { readonly status: "revision_stale" }
+  | { readonly status: ProposalNotEditableStatus }
+  | { readonly status: "source_plan_version_superseded" }
+
+export type DecideReviewProposalInput =
+  | { readonly decision: "approved"; readonly comment: string | null }
+  | { readonly decision: "rejected"; readonly comment: string }
+
+export async function decideReviewProposal(
+  database: D1Database,
+  proposalId: Uuid,
+  expectedRevision: number,
+  input: DecideReviewProposalInput,
+): Promise<DecideReviewProposalResult> {
+  const proposal = await findReviewProposalById(database, proposalId)
+
+  if (proposal === null) return { status: "proposal_not_found" }
+  if (proposal.revision !== expectedRevision) return { status: "revision_stale" }
+
+  const notEditable = proposalNotEditableStatus(proposal.status)
+  if (notEditable !== null) return { status: notEditable }
+  if (proposal.draft === null || proposal.draft.changes.length === 0) {
+    return { status: "proposal_not_reviewable" }
+  }
+
+  const decidedAt = currentUtcTimestamp()
+  const saved = input.decision === "approved"
+    ? await approveReviewProposal(
+        database,
+        proposalId,
+        expectedRevision,
+        input.comment,
+        {
+          id: generateUuid(),
+          planId: proposal.planId,
+          version: proposal.sourcePlanVersion.version + 1,
+          name: proposal.draft.proposedPlan.name,
+          useWhen: proposal.draft.proposedPlan.useWhen,
+          steps: proposal.draft.proposedPlan.steps.map((step, index) => ({
+            id: generateUuid(),
+            position: index + 1,
+            title: step.title,
+            description: step.description,
+          })),
+          approvedAt: decidedAt,
+          approvedBy: null,
+        },
+      )
+    : await rejectReviewProposal(
+        database,
+        proposalId,
+        expectedRevision,
+        input.comment,
+        decidedAt,
+      )
+
+  if (!saved) {
+    const current = await findReviewProposalById(database, proposalId)
+
+    if (current === null) return { status: "proposal_not_found" }
+    if (current.revision !== expectedRevision) return { status: "revision_stale" }
+
+    const currentNotEditable = proposalNotEditableStatus(current.status)
+    if (currentNotEditable !== null) return { status: currentNotEditable }
+
+    if (input.decision === "approved") {
+      return { status: "source_plan_version_superseded" }
+    }
+
+    throw new Error(`Failed to reject review proposal ${proposalId}`)
+  }
+
+  const decidedProposal = await findReviewProposalById(database, proposalId)
+
+  if (decidedProposal === null) {
+    throw new Error(`Proposal ${proposalId} disappeared after it was decided`)
+  }
+
+  return { status: "decided", proposal: decidedProposal }
 }
 
 export type StartProposalGenerationAttemptResult =

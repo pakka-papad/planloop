@@ -8,6 +8,7 @@ import type {
   ReviewProposalSummary,
 } from "../domain/review-proposal"
 import {
+  decideReviewProposal,
   getReviewProposal,
   listReviewProposals,
   ListReviewProposalsCursorSchema,
@@ -22,7 +23,10 @@ import { notFound, problem, validationProblem } from "./problems"
 import { PageLimitSchema, parseQueryParam, schemaParser } from "./query-params"
 import { toPlanVersionDto, type PlanVersionDto } from "./action-plans"
 import { toActionRecordDto, type ActionRecordDto } from "./incidents"
-import { ReplaceProposalDraftRequestSchema } from "./review-proposal-schemas"
+import {
+  DecideProposalRequestSchema,
+  ReplaceProposalDraftRequestSchema,
+} from "./review-proposal-schemas"
 import { parseJsonBody } from "./validation"
 
 export interface ProposedPlanStepDto {
@@ -126,11 +130,6 @@ export interface ReviewProposalSummaryDto {
   readonly decided_by: string | null
   readonly decision_comment: string | null
   readonly created_plan_version: Omit<PlanVersionDto, "steps"> | null
-}
-
-export interface DecideProposalRequest {
-  readonly decision: "approved" | "rejected"
-  readonly comment?: string
 }
 
 function toPlanVersionSummaryDto(
@@ -445,6 +444,92 @@ export async function handleReplaceReviewProposalDraft(
     case "draft_invalid":
       return validationProblem([{ field: "body", message: result.reason }])
     case "updated":
+      return Response.json(toReviewProposalDto(result.proposal), {
+        headers: {
+          etag: reviewProposalEtag(result.proposal.id, result.proposal.revision),
+        },
+      })
+  }
+}
+
+export async function handleDecideReviewProposal(
+  request: Request,
+  database: D1Database,
+  proposalId: string,
+): Promise<Response> {
+  const parsedProposalId = v.safeParse(UuidSchema, proposalId)
+
+  if (!parsedProposalId.success) {
+    return notFound("The requested review proposal does not exist.")
+  }
+
+  const revision = proposalRevisionFromRequest(request, parsedProposalId.output)
+  if (!revision.ok) return revision.response
+
+  const body = await parseJsonBody(request, DecideProposalRequestSchema)
+  if (!body.ok) return body.response
+
+  const result = await decideReviewProposal(
+    database,
+    parsedProposalId.output,
+    revision.revision,
+    body.value.decision === "approved"
+      ? { decision: body.value.decision, comment: body.value.comment ?? null }
+      : { decision: body.value.decision, comment: body.value.comment },
+  )
+
+  switch (result.status) {
+    case "proposal_not_found":
+      return notFound("The requested review proposal does not exist.")
+    case "revision_stale":
+      return problem({
+        type: "urn:planloop:problem:proposal-revision-stale",
+        title: "Proposal revision stale",
+        status: 412,
+        detail: "The review proposal changed after it was retrieved.",
+        code: "proposal_revision_stale",
+      })
+    case "proposal_updating":
+      return problem({
+        type: "urn:planloop:problem:proposal-updating",
+        title: "Proposal is updating",
+        status: 409,
+        detail: "The proposal cannot be decided while generation is running.",
+        code: "proposal_updating",
+      })
+    case "proposal_generation_failed":
+      return problem({
+        type: "urn:planloop:problem:proposal-generation-failed",
+        title: "Proposal generation failed",
+        status: 409,
+        detail: "Retry proposal generation before deciding the proposal.",
+        code: "proposal_generation_failed",
+      })
+    case "proposal_not_reviewable":
+      return problem({
+        type: "urn:planloop:problem:proposal-not-reviewable",
+        title: "Proposal is not reviewable",
+        status: 409,
+        detail: "A proposal with no recommended changes cannot be decided.",
+        code: "proposal_not_reviewable",
+      })
+    case "proposal_already_decided":
+      return problem({
+        type: "urn:planloop:problem:proposal-already-decided",
+        title: "Proposal already decided",
+        status: 409,
+        detail: "An approved or rejected proposal cannot be decided again.",
+        code: "proposal_already_decided",
+      })
+    case "source_plan_version_superseded":
+      return problem({
+        type: "urn:planloop:problem:source-plan-version-superseded",
+        title: "Source plan version superseded",
+        status: 409,
+        detail: "The action plan has a newer approved version.",
+        code: "source_plan_version_superseded",
+      })
+    case "decided":
       return Response.json(toReviewProposalDto(result.proposal), {
         headers: {
           etag: reviewProposalEtag(result.proposal.id, result.proposal.revision),
