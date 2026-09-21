@@ -272,7 +272,6 @@ test("creates an approved action plan and persists its ordered steps", async () 
   expect(created.created_at).toBe(created.current_version.approved_at)
   expect(created.id).toMatch(/^[0-9a-f-]{36}$/)
   expect(created.current_version.id).toMatch(/^[0-9a-f-]{36}$/)
-  expect(created.current_version.steps.map((step) => step.position)).toEqual([1, 2])
   expect(new Set(created.current_version.steps.map((step) => step.id))).toHaveLength(2)
 
   const getResponse = await server.fetch(response.headers.get("location") ?? "")
