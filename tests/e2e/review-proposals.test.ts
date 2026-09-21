@@ -818,9 +818,10 @@ test.each([
 })
 
 test("replaces a pending proposal draft and records the revision once", async () => {
-  const path = `/api/v1/review-proposals/${PROPOSALS.pending}/draft`
+  const proposalPath = `/api/v1/review-proposals/${PROPOSALS.pending}`
+  const draftPath = `${proposalPath}/draft`
   const request = () =>
-    server.fetch(path, {
+    server.fetch(draftPath, {
       method: "PUT",
       headers: {
         "content-type": "application/json",
@@ -838,7 +839,45 @@ test("replaces a pending proposal draft and records the revision once", async ()
     id: PROPOSALS.pending,
     status: "pending_review",
     revision: 3,
-    draft: editedPendingDraft(),
+  })
+
+  const persistedResponse = await server.fetch(proposalPath)
+  expect(persistedResponse.status).toBe(200)
+  expect(persistedResponse.headers.get("etag")).toBe(`"${PROPOSALS.pending}:3"`)
+  expect(await persistedResponse.json()).toMatchObject({
+    id: PROPOSALS.pending,
+    status: "pending_review",
+    revision: 3,
+    draft: {
+      summary: "Check processor health before changing payment routing.",
+      proposed_plan: {
+        name: "Payment authorization decline spike",
+        use_when: "Use when valid card authorizations decline above baseline.",
+        steps: [
+          {
+            source_step_id: PAYMENT_STEP_ID,
+            title: "Classify processor responses",
+            description:
+              "Separate issuer declines from processor, routing, or integration failures.",
+          },
+          {
+            source_step_id: null,
+            title: "Verify regional processor health",
+            description:
+              "Review processor latency, timeout rate, and regional availability before changing routing.",
+          },
+        ],
+      },
+      changes: [
+        {
+          type: "add_step",
+          proposed_step_position: 2,
+          rationale:
+            "The response required a regional processor health check before rerouting traffic.",
+          action_record_ids: [ADDITIONAL_ACTION_ID],
+        },
+      ],
+    },
   })
 })
 
