@@ -18,3 +18,5 @@ dist/
 # TypeScript
 *.tsbuildinfo
 
+# Localflare
+.localflare

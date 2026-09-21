@@ -31,6 +31,14 @@ Local D1 data and Workflow state live under `.wrangler/` and are not committed.
 The seed is safe to rerun and contains five realistic action plans with version
 history.
 
+### Inspect Local State
+
+Cloudflare's local
+explorer is available at
+[http://localhost:5173/cdn-cgi/local/explorer](http://localhost:5173/cdn-cgi/local/explorer).
+It shows local Workflow instances, including their status, steps, retries, and
+errors.
+
 ---
 
 ## Verification
