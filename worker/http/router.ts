@@ -4,7 +4,6 @@ import {
   handleGetActionPlan,
   handleListActionPlans,
 } from "./action-plans"
-import { handleHealth } from "./health"
 import {
   handleAddActionRecord,
   handleCloseIncident,
@@ -34,11 +33,6 @@ interface Route {
 }
 
 const routes: readonly Route[] = [
-  {
-    method: "GET",
-    pattern: new URLPattern({ pathname: "/api/health" }),
-    handle: (_request, env) => handleHealth(env),
-  },
   {
     method: "GET",
     pattern: new URLPattern({ pathname: "/api/v1/action-plans" }),

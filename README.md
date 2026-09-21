@@ -15,7 +15,7 @@ npm run cf-typegen
 npm run dev
 ```
 
-Open the URL printed by Vite. The setup screen calls `GET /api/health` to verify the Worker and local bindings.
+Open the URL printed by Vite.
 
 Useful checks:
 
