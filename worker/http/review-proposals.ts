@@ -29,6 +29,28 @@ import {
 } from "./review-proposal-schemas"
 import { parseJsonBody } from "./validation"
 
+const reviewProposalStatuses = [
+  "updating",
+  "pending_review",
+  "failed",
+  "no_change",
+  "approved",
+  "rejected",
+] as const
+
+const defaultReviewProposalStatuses: readonly ReviewProposalStatus[] = [
+  "updating",
+  "pending_review",
+  "failed",
+]
+
+const ReviewProposalStatusesSchema = v.pipe(
+  v.array(v.picklist(reviewProposalStatuses)),
+  v.minLength(1),
+  v.maxLength(reviewProposalStatuses.length),
+  v.check((statuses) => new Set(statuses).size === statuses.length),
+)
+
 export interface ProposedPlanStepDto {
   readonly source_step_id: string | null
   readonly title: string
@@ -183,24 +205,17 @@ export async function handleListReviewProposals(
   database: D1Database,
 ): Promise<Response> {
   const searchParams = new URL(request.url).searchParams
-  const status = parseQueryParam<ReviewProposalStatus | null>(
-    searchParams,
-    "status",
-    null,
-    schemaParser(
-      v.picklist([
-        "updating",
-        "pending_review",
-        "failed",
-        "no_change",
-        "approved",
-        "rejected",
-      ]),
-    ),
-    "Must be updating, pending_review, failed, no_change, approved, or rejected.",
-  )
+  const requestedStatuses = searchParams.getAll("status")
+  const parsedStatuses = requestedStatuses.length === 0
+    ? { success: true, output: defaultReviewProposalStatuses } as const
+    : v.safeParse(ReviewProposalStatusesSchema, requestedStatuses)
 
-  if (!status.ok) return validationProblem([status.error])
+  if (!parsedStatuses.success) {
+    return validationProblem([{
+      field: "status",
+      message: "Must contain unique updating, pending_review, failed, no_change, approved, or rejected values.",
+    }])
+  }
 
   const limit = parseQueryParam(
     searchParams,
@@ -224,7 +239,7 @@ export async function handleListReviewProposals(
 
   const page = await listReviewProposals(
     database,
-    status.value,
+    parsedStatuses.output,
     limit.value,
     cursor.value,
   )

@@ -7,14 +7,15 @@ import { useEffect, useState } from "react"
 
 import {
   listReviewProposals,
-  type ActiveReviewProposalStatus,
   type ReviewProposalSummary,
+  type ReviewProposalStatus,
 } from "../api/review-proposals"
 import { errorMessage, isAbortError } from "../api/client"
+import { StatusFilter } from "../components/StatusFilter"
 import { formatDateTime } from "../format"
 import { AppLink } from "../navigation"
 
-const statusPresentation: Record<ActiveReviewProposalStatus, {
+const statusPresentation: Record<ReviewProposalStatus, {
   readonly label: string
   readonly description: string
   readonly className: string
@@ -34,9 +35,40 @@ const statusPresentation: Record<ActiveReviewProposalStatus, {
     description: "Proposal generation needs attention before this review can continue.",
     className: "bg-destructive/10 text-destructive",
   },
+  no_change: {
+    label: "No changes recommended",
+    description: "The incident evidence did not justify changing this action plan.",
+    className: "bg-muted text-muted-foreground",
+  },
+  approved: {
+    label: "Approved",
+    description: "The proposal was approved and published as a new plan version.",
+    className: "bg-primary/10 text-primary",
+  },
+  rejected: {
+    label: "Rejected",
+    description: "The proposal was reviewed and rejected.",
+    className: "bg-muted text-muted-foreground",
+  },
 }
 
+const reviewProposalStatusOptions = [
+  { value: "updating", label: "Generating" },
+  { value: "pending_review", label: "Ready for review" },
+  { value: "failed", label: "Generation failed" },
+  { value: "no_change", label: "No changes recommended" },
+  { value: "approved", label: "Approved" },
+  { value: "rejected", label: "Rejected" },
+] as const
+
+const defaultReviewProposalStatuses: readonly ReviewProposalStatus[] = [
+  "updating",
+  "pending_review",
+  "failed",
+]
+
 export function ReviewProposalsPage() {
+  const [selectedStatuses, setSelectedStatuses] = useState(defaultReviewProposalStatuses)
   const [proposals, setProposals] = useState<readonly ReviewProposalSummary[]>([])
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -47,7 +79,7 @@ export function ReviewProposalsPage() {
   useEffect(() => {
     const controller = new AbortController()
 
-    void listReviewProposals(null, controller.signal)
+    void listReviewProposals(selectedStatuses, null, controller.signal)
       .then((page) => {
         setProposals(page.items)
         setNextCursor(page.next_cursor)
@@ -60,7 +92,15 @@ export function ReviewProposalsPage() {
       })
 
     return () => controller.abort()
-  }, [requestKey])
+  }, [requestKey, selectedStatuses])
+
+  function changeStatuses(statuses: readonly ReviewProposalStatus[]) {
+    setSelectedStatuses(statuses)
+    setProposals([])
+    setNextCursor(null)
+    setError(null)
+    setIsLoading(true)
+  }
 
   function refresh() {
     setError(null)
@@ -75,7 +115,7 @@ export function ReviewProposalsPage() {
     setIsLoadingMore(true)
 
     try {
-      const page = await listReviewProposals(nextCursor)
+      const page = await listReviewProposals(selectedStatuses, nextCursor)
       setProposals((current) => [...current, ...page.items])
       setNextCursor(page.next_cursor)
     } catch (cause) {
@@ -95,15 +135,23 @@ export function ReviewProposalsPage() {
             Review plan improvements generated from completed incident evidence.
           </p>
         </div>
-        <button
-          className="inline-flex cursor-pointer items-center gap-2 self-start rounded-md border bg-background px-3 py-2 text-sm font-semibold transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50 sm:self-auto"
-          disabled={isLoading}
-          onClick={refresh}
-          type="button"
-        >
-          <ArrowClockwiseIcon aria-hidden="true" size={16} />
-          Refresh
-        </button>
+        <div className="flex flex-wrap gap-3 self-start sm:self-auto">
+          <StatusFilter
+            disabled={isLoadingMore}
+            onChange={changeStatuses}
+            options={reviewProposalStatusOptions}
+            selectedValues={selectedStatuses}
+          />
+          <button
+            className="inline-flex cursor-pointer items-center gap-2 rounded-md border bg-background px-3 py-2 text-sm font-semibold transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={isLoading || isLoadingMore}
+            onClick={refresh}
+            type="button"
+          >
+            <ArrowClockwiseIcon aria-hidden="true" size={16} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {isLoading && proposals.length === 0 ? (
@@ -131,7 +179,7 @@ export function ReviewProposalsPage() {
       {!isLoading && !error && proposals.length === 0 ? (
         <div className="my-8 rounded-xl border bg-card p-10 text-center">
           <ListChecksIcon aria-hidden="true" className="mx-auto text-muted-foreground" size={34} />
-          <h2 className="mt-4 text-lg font-semibold">No reviews need attention</h2>
+          <h2 className="mt-4 text-lg font-semibold">No matching review proposals</h2>
           <p className="mt-2 text-sm text-muted-foreground">
             Proposals will appear here when completed incidents suggest an action-plan improvement.
           </p>
@@ -139,7 +187,7 @@ export function ReviewProposalsPage() {
       ) : null}
 
       {proposals.length > 0 ? (
-        <section className="py-8" aria-label="Review proposals requiring attention">
+        <section className="py-8" aria-label="Review proposals">
           <div className="space-y-3">
             {proposals.map((proposal) => {
               const presentation = statusPresentation[proposal.status]

@@ -246,14 +246,11 @@ function toReviewProposalSummary(row: ReviewProposalSummaryRow): ReviewProposalS
 
 export async function findReviewProposals(
   database: D1Database,
-  status: ReviewProposalStatus | null,
+  statuses: readonly ReviewProposalStatus[],
   limit: number,
   cursor: { readonly createdAt: string; readonly id: string } | null,
 ): Promise<readonly ReviewProposalSummary[]> {
-  const statusClause =
-    status === null
-      ? "p.status IN ('updating', 'pending_review', 'failed')"
-      : "p.status = ?"
+  const statusPlaceholders = statuses.map(() => "?").join(", ")
   const cursorClause =
     cursor === null
       ? ""
@@ -288,11 +285,11 @@ export async function findReviewProposals(
      FROM review_proposals p
      JOIN action_plan_versions source ON source.id = p.source_plan_version_id
      LEFT JOIN action_plan_versions created ON created.id = p.created_plan_version_id
-     WHERE ${statusClause} ${cursorClause}
+     WHERE p.status IN (${statusPlaceholders}) ${cursorClause}
      ORDER BY p.created_at ASC, p.id ASC
      LIMIT ?`,
   )
-  const bindings: unknown[] = status === null ? [] : [status]
+  const bindings: unknown[] = [...statuses]
 
   if (cursor !== null) {
     bindings.push(cursor.createdAt, cursor.createdAt, cursor.id)

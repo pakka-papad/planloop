@@ -50,11 +50,11 @@ export interface ReviewProposalPage {
 
 export async function listReviewProposals(
   database: D1Database,
-  status: ReviewProposalStatus | null,
+  statuses: readonly ReviewProposalStatus[],
   limit: number,
   cursor: ListReviewProposalsCursor | null,
 ): Promise<ReviewProposalPage> {
-  const results = await findReviewProposals(database, status, limit + 1, cursor)
+  const results = await findReviewProposals(database, statuses, limit + 1, cursor)
   const items = results.slice(0, limit)
   const lastItem = items.at(-1)
 

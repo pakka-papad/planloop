@@ -290,7 +290,7 @@ stateDiagram-v2
 
 #### `GET /review-proposals`
 
-Accepts `status=updating|pending_review|failed|no_change|approved|rejected`, `limit`, and `cursor`. Omitting `status` returns `updating`, `pending_review`, and `failed` proposals; dormant `no_change` proposals are omitted. Results are ordered oldest first. List items omit plan steps, evidence records, contributing incident details, and proposed steps.
+Accepts `status=updating|pending_review|failed|no_change|approved|rejected`, `limit`, and `cursor`. `status` may be repeated to select multiple unique states. Omitting it returns `updating`, `pending_review`, and `failed` proposals; dormant `no_change` proposals are omitted. Results are ordered oldest first. List items omit plan steps, evidence records, contributing incident details, and proposed steps.
 
 #### `GET /review-proposals/{proposal_id}`
 

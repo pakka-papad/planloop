@@ -1010,6 +1010,19 @@ test("filters by one status", async () => {
   expect(body.items.map((item) => item.id)).toEqual([PROPOSALS.noChange])
 })
 
+test("filters by multiple statuses", async () => {
+  const response = await server.fetch(
+    "/api/v1/review-proposals?status=updating&status=failed",
+  )
+  const body = (await response.json()) as { items: Array<{ id: string }> }
+
+  expect(response.status).toBe(200)
+  expect(body.items.map((item) => item.id)).toEqual([
+    PROPOSALS.updating,
+    PROPOSALS.failed,
+  ])
+})
+
 test("paginates oldest first without dropping the cursor item", async () => {
   const firstResponse = await server.fetch("/api/v1/review-proposals?limit=2")
   const firstPage = (await firstResponse.json()) as {
@@ -1037,7 +1050,7 @@ test("paginates oldest first without dropping the cursor item", async () => {
 
 test.each([
   "status=ready",
-  "status=failed&status=updating",
+  "status=failed&status=failed",
   "limit=0",
   "cursor=not-a-valid-cursor",
 ])("rejects an invalid query: %s", async (query) => {

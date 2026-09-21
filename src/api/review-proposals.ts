@@ -10,16 +10,11 @@ export type ReviewProposalStatus =
   | "approved"
   | "rejected"
 
-export type ActiveReviewProposalStatus = Extract<
-  ReviewProposalStatus,
-  "updating" | "pending_review" | "failed"
->
-
 export interface ReviewProposalSummary {
   readonly id: string
   readonly plan_id: string
   readonly source_plan_version: Omit<PlanVersion, "steps">
-  readonly status: ActiveReviewProposalStatus
+  readonly status: ReviewProposalStatus
   readonly failure_reason: string | null
   readonly revision: number
   readonly draft: {
@@ -121,10 +116,12 @@ export type ReviewProposalDecision =
   | { readonly decision: "rejected"; readonly comment: string }
 
 export function listReviewProposals(
+  statuses: readonly ReviewProposalStatus[],
   cursor: string | null = null,
   signal?: AbortSignal,
 ): Promise<ReviewProposalPage> {
   const search = new URLSearchParams()
+  statuses.forEach((status) => search.append("status", status))
   if (cursor !== null) search.set("cursor", cursor)
 
   const query = search.size === 0 ? "" : `?${search}`
