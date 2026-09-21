@@ -740,7 +740,7 @@ test("restarts fresh updating generation without changing the revision", async (
   await env.DB.prepare(
     "UPDATE review_proposals SET updated_at = ? WHERE id = ?",
   )
-    .bind(new Date().toISOString(), PROPOSALS.updating)
+    .bind("9999-12-31T23:59:59.999Z", PROPOSALS.updating)
     .run()
   const path = `/api/v1/review-proposals/${PROPOSALS.updating}/generation-attempts`
   const options = {
