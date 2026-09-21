@@ -251,7 +251,7 @@ A review proposal contains:
 | `evidence` | action record array | Distinct union of the records cited by the proposal's changes. |
 | `status` | enum | `updating`, `pending_review`, `failed`, `no_change`, `approved`, or `rejected`. |
 | `failure_reason` | string or null | Present only when `status` is `failed`; 1–500 characters. |
-| `revision` | integer | Starts at 1 and increments once when an incident is attached, a generation result or failure is saved, a retry starts from `failed`, the draft is edited, or the proposal is decided. |
+| `revision` | integer | Starts at 1 and increments once when an incident is attached, a generation result or failure is saved, a retry starts from `failed`, stale generation is restarted, the draft is edited, or the proposal is decided. |
 | `draft` | proposal draft or null | `null` until initial generation succeeds; editable only while `pending_review`. |
 | `created_at`, `updated_at` | timestamp | Server-generated. |
 | `decided_at` | timestamp or null | Set by the server when the proposal is decided. |
@@ -302,7 +302,7 @@ Returns the complete proposal, source plan, contributing incidents, cited eviden
 
 The request has no body. It must include the proposal's current `ETag` in `If-Match`; a missing header returns `428` with code `proposal_revision_required`, and a stale value returns `412` with code `proposal_revision_stale`.
 
-For a `failed` proposal, the server moves the proposal to `updating`, clears `failure_reason`, and increments its revision before starting a Workflow whose execution ID is derived from the proposal ID and new revision. For an `updating` proposal, it repeats the idempotent start operation for the current revision without incrementing the revision; an existing execution counts as success. Other states return `409` with code `proposal_not_retryable`.
+For a `failed` proposal, the server moves the proposal to `updating`, clears `failure_reason`, and increments its revision before starting a Workflow whose execution ID is derived from the proposal ID and new revision. For an `updating` proposal modified within the last 30 minutes, it repeats the idempotent start operation for the current revision; an existing execution counts as success. An older `updating` proposal is stale: the server increments its revision and starts a fresh Workflow. The old Workflow cannot save because its expected revision is no longer current. Other states return `409` with code `proposal_not_retryable`.
 
 The Workflow reloads every closed incident referencing the proposal. If the Workflow cannot start, the committed proposal state remains and the request returns `503`; the client can retrieve the current ETag and retry the request. A successful start returns `202 Accepted` with the updated proposal and ETag.
 

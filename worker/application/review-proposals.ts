@@ -39,6 +39,8 @@ export const ListReviewProposalsCursorSchema = v.strictObject({
   id: UuidSchema,
 })
 
+const GENERATION_LEASE_MS = 30 * 60 * 1000
+
 export type ListReviewProposalsCursor = v.InferOutput<
   typeof ListReviewProposalsCursorSchema
 >
@@ -267,12 +269,18 @@ export async function startProposalGenerationAttempt(
   proposalId: Uuid,
   expectedRevision: number,
 ): Promise<StartProposalGenerationAttemptResult> {
+  const updatedAt = currentUtcTimestamp()
+  const staleBefore = v.parse(
+    UtcTimestampSchema,
+    new Date(new Date(updatedAt).getTime() - GENERATION_LEASE_MS).toISOString(),
+  )
   const revision = await beginProposalGenerationAttempt(
     database,
     proposalId,
     expectedRevision,
     generateUuid(),
-    currentUtcTimestamp(),
+    updatedAt,
+    staleBefore,
   )
 
   if (revision === null) {

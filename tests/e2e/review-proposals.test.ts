@@ -553,7 +553,13 @@ test("retries failed generation once for concurrent requests with the same ETag"
   })
 })
 
-test("restarts updating generation without changing the revision", async () => {
+test("restarts fresh updating generation without changing the revision", async () => {
+  const env = await worker.getEnv()
+  await env.DB.prepare(
+    "UPDATE review_proposals SET updated_at = ? WHERE id = ?",
+  )
+    .bind(new Date().toISOString(), PROPOSALS.updating)
+    .run()
   const path = `/api/v1/review-proposals/${PROPOSALS.updating}/generation-attempts`
   const options = {
     method: "POST",
@@ -566,6 +572,39 @@ test("restarts updating generation without changing the revision", async () => {
   expect(secondResponse.status).toBe(202)
   expect(firstResponse.headers.get("etag")).toBe(`"${PROPOSALS.updating}:2"`)
   expect(secondResponse.headers.get("etag")).toBe(`"${PROPOSALS.updating}:2"`)
+})
+
+test("restarts stale updating generation with a new revision", async () => {
+  const path = `/api/v1/review-proposals/${PROPOSALS.updating}/generation-attempts`
+  const request = () =>
+    server.fetch(path, {
+      method: "POST",
+      headers: { "if-match": `"${PROPOSALS.updating}:2"` },
+    })
+  const responses = await Promise.all([request(), request()])
+
+  expect(responses.map((response) => response.status).sort()).toEqual([202, 412])
+
+  const accepted = responses.find((response) => response.status === 202)
+  expect(accepted?.headers.get("etag")).toBe(`"${PROPOSALS.updating}:3"`)
+  expect(await accepted?.json()).toMatchObject({
+    id: PROPOSALS.updating,
+    status: "updating",
+    revision: 3,
+  })
+
+  const env = await worker.getEnv()
+  const audit = await env.DB.prepare(
+    "SELECT event_type, details_json FROM audit_events WHERE entity_id = ?",
+  )
+    .bind(PROPOSALS.updating)
+    .first<{ event_type: string; details_json: string }>()
+
+  expect(audit?.event_type).toBe("review_proposal_generation_retried")
+  expect(JSON.parse(audit?.details_json ?? "null")).toEqual({
+    failure_reason: null,
+    revision: 2,
+  })
 })
 
 test.each([

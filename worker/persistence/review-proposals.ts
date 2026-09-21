@@ -137,8 +137,9 @@ export async function beginProposalGenerationAttempt(
   expectedRevision: number,
   auditEventId: Uuid,
   updatedAt: UtcTimestamp,
+  staleBefore: UtcTimestamp,
 ): Promise<number | null> {
-  const auditFailure = database
+  const auditRetry = database
     .prepare(
       `INSERT INTO audit_events
          (id, actor_id, event_type, entity_type, entity_id, details_json, created_at)
@@ -146,24 +147,27 @@ export async function beginProposalGenerationAttempt(
               'review_proposal', id,
               json_object('failure_reason', failure_reason, 'revision', revision), ?
        FROM review_proposals
-       WHERE id = ? AND revision = ? AND status = 'failed'`,
+       WHERE id = ?
+         AND revision = ?
+         AND status IN ('failed', 'updating')
+         AND (status = 'failed' OR updated_at <= ?)`,
     )
-    .bind(auditEventId, updatedAt, proposalId, expectedRevision)
+    .bind(auditEventId, updatedAt, proposalId, expectedRevision, staleBefore)
   const transition = database
     .prepare(
       `UPDATE review_proposals
        SET status = 'updating',
            failure_reason = CASE WHEN status = 'failed' THEN NULL ELSE failure_reason END,
-           revision = CASE WHEN status = 'failed' THEN revision + 1 ELSE revision END,
-           updated_at = CASE WHEN status = 'failed' THEN ? ELSE updated_at END
+           revision = CASE WHEN status = 'failed' OR updated_at <= ? THEN revision + 1 ELSE revision END,
+           updated_at = CASE WHEN status = 'failed' OR updated_at <= ? THEN ? ELSE updated_at END
        WHERE id = ?
          AND revision = ?
          AND status IN ('failed', 'updating')
        RETURNING revision`,
     )
-    .bind(updatedAt, proposalId, expectedRevision)
+    .bind(staleBefore, staleBefore, updatedAt, proposalId, expectedRevision)
   const results = await database.batch<{ revision: number }>([
-    auditFailure,
+    auditRetry,
     transition,
   ])
 

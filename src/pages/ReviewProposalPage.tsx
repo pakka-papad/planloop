@@ -55,6 +55,12 @@ const statusPresentation: Record<ReviewProposalStatus, {
   },
 }
 
+const GENERATION_LEASE_MS = 30 * 60 * 1000
+
+function generationIsStale(updatedAt: string): boolean {
+  return Date.now() - Date.parse(updatedAt) >= GENERATION_LEASE_MS
+}
+
 export function ReviewProposalPage({ proposalId }: { readonly proposalId: string }) {
   const [resource, setResource] = useState<VersionedReviewProposal | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -204,6 +210,8 @@ function ProposalView({
 }) {
   const presentation = statusPresentation[proposal.status]
   const [isEditorBusy, setIsEditorBusy] = useState(false)
+  const canRestartGeneration =
+    proposal.status === "updating" && generationIsStale(proposal.updated_at)
 
   return (
     <div className="mt-8 space-y-6">
@@ -263,10 +271,28 @@ function ProposalView({
           </div>
         ) : null}
 
+        {canRestartGeneration ? (
+          <div className="mt-6 rounded-lg border bg-muted/30 p-4">
+            <p className="text-sm font-semibold">Generation is taking longer than expected</p>
+            <p className="mt-1 text-sm leading-6 text-muted-foreground">
+              Start a new generation attempt. A late result from the earlier attempt will be ignored.
+            </p>
+            <button
+              className="mt-4 inline-flex cursor-pointer items-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={isRetrying}
+              onClick={onRetryGeneration}
+              type="button"
+            >
+              <ArrowClockwiseIcon aria-hidden="true" size={16} />
+              {isRetrying ? "Restarting…" : "Restart generation"}
+            </button>
+          </div>
+        ) : null}
+
         {retryError ? (
           <div className="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 p-4" role="alert">
             <p className="text-sm font-medium text-destructive">{retryError}</p>
-            {proposal.status === "updating" ? (
+            {proposal.status === "updating" && !canRestartGeneration ? (
               <button
                 className="mt-3 inline-flex cursor-pointer items-center gap-2 rounded-md border bg-background px-3 py-2 text-sm font-semibold transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
                 disabled={isRetrying}
