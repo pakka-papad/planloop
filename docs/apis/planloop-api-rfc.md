@@ -405,7 +405,7 @@ Constraints:
 
 Approval creates the next immutable plan version and marks the proposal approved in one transaction. Rejection changes only the proposal status. Both outcomes increment `revision` and record the decision time. A decided proposal cannot be edited or decided again.
 
-Adding an incident and deciding a proposal are serialized. If the Workflow update wins, a decision using the earlier revision fails with `proposal_revision_stale`. If the decision wins, that proposal remains unchanged and a newly closed deviating incident is processed into a new active proposal against the current plan version.
+Adding an incident and deciding a proposal are serialized. If the Workflow update wins, a decision using the earlier revision fails with `proposal_revision_stale`. If the decision wins, that proposal remains unchanged and a newly closed deviating incident creates a new active proposal from its pinned plan version.
 
 Returns the complete decided proposal with its new `ETag`. `created_plan_version` is populated only after approval.
 
