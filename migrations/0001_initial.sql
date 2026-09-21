@@ -17,7 +17,7 @@ CREATE TABLE action_plan_versions (
   approved_by TEXT
 );
 
-CREATE INDEX action_plan_versions_plan_version_idx
+CREATE UNIQUE INDEX action_plan_versions_plan_version_idx
   ON action_plan_versions(plan_id, version);
 
 CREATE TABLE action_plan_steps (
@@ -28,7 +28,7 @@ CREATE TABLE action_plan_steps (
   description TEXT NOT NULL
 );
 
-CREATE INDEX action_plan_steps_version_position_idx
+CREATE UNIQUE INDEX action_plan_steps_version_position_idx
   ON action_plan_steps(plan_version_id, position);
 
 CREATE TABLE review_proposals (
@@ -64,7 +64,7 @@ CREATE TABLE review_proposal_steps (
   description TEXT NOT NULL
 );
 
-CREATE INDEX review_proposal_steps_proposal_position_idx
+CREATE UNIQUE INDEX review_proposal_steps_proposal_position_idx
   ON review_proposal_steps(proposal_id, position);
 
 CREATE TABLE review_proposal_changes (
@@ -77,7 +77,7 @@ CREATE TABLE review_proposal_changes (
   rationale TEXT NOT NULL
 );
 
-CREATE INDEX review_proposal_changes_proposal_position_idx
+CREATE UNIQUE INDEX review_proposal_changes_proposal_position_idx
   ON review_proposal_changes(proposal_id, position);
 
 CREATE TABLE incidents (
